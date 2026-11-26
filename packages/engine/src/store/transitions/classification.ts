@@ -24,6 +24,8 @@ import { CORRECTION_KIND, type ProposalRow, approveProposal, effectiveVersion, g
 import { type Facts, correctionManifest, invalidateIntent, raiseQuestion } from './queue.js';
 import { engineSettings } from './settings.js';
 import { correctionProposalDecided } from '../../spec/change.js';
+import { POLICY_ACTOR, briefScope, runIteration } from './policy-fix.js';
+import { recordDelegatedAction } from './delegation.js';
 import type { Tx } from './tx.js';
 
 type Db = Tx['db'];
@@ -170,7 +172,13 @@ export function recordClassification(tx: Tx, args: { proposal: string; effective
   writeClassification(tx, p, c);
   tx.db.prepare('UPDATE "protected_proposals" SET "status" = ?, "classified_tree" = ? WHERE "id" = ?').run(status, args.tree ?? null, p.id);
   tx.emit('protected.classified', { project: p.project, proposal: p.id }, { change_kind: c.change_kind, from: p.status, to: status, classifier_version: c.classifier_version });
-  raiseQuestion(tx, { project: p.project, kind: CORRECTION_KIND[c.change_kind] as DecisionKind, subjectType: 'protected_proposal', subjectId: p.id });
+  // D2 (DECISIONS item 57): a tightening the approved brief authorizes is
+  // approved by its policy, whatever the classifier's authority, and no
+  // question is raised; otherwise the owner's question, its evidence naming
+  // why the policy did not cover it (a rapid prototype's only).
+  const policy = policyTightening(tx, getProposal(tx, p.id)!, c);
+  if (policy.approved) return { proposal: p.id, change_kind: c.change_kind };
+  raiseQuestion(tx, { project: p.project, kind: CORRECTION_KIND[c.change_kind] as DecisionKind, subjectType: 'protected_proposal', subjectId: p.id, ...policyEvidence(policy) });
   // Under `authoritative` (D3 §3.3; D6 §6.2; SEAM.md §351) a tightening is
   // the Reviewer's to approve: its review work, about the proposal, from
   // ("protected_proposal", <proposal>, 1). Under `recommend` none is made:
@@ -204,7 +212,9 @@ export function reclassifyProposal(tx: Tx, args: { proposal: string; effective: 
   for (const d of tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open'`).all(p.id) as DecisionRow[]) {
     if (kinds.includes(d.kind)) invalidateDecision(tx, d, `the effective protected version moved to ${args.effective}: the proposal is classified again`);
   }
-  raiseQuestion(tx, { project: p.project, kind: CORRECTION_KIND[c.change_kind] as DecisionKind, subjectType: 'protected_proposal', subjectId: p.id });
+  const policy = policyTightening(tx, getProposal(tx, p.id)!, c);
+  if (policy.approved) return { proposal: p.id, change_kind: c.change_kind };
+  raiseQuestion(tx, { project: p.project, kind: CORRECTION_KIND[c.change_kind] as DecisionKind, subjectType: 'protected_proposal', subjectId: p.id, ...policyEvidence(policy) });
   return { proposal: p.id, change_kind: c.change_kind };
 }
 
@@ -329,6 +339,14 @@ function bindingHolds(tx: Tx, p: ProposalRow, intent: string | null, facts: Fact
   }
   const bound = tx.db.prepare('SELECT "approval_binding" FROM "protected_proposals" WHERE "id" = ?').get(p.id) as { approval_binding: string | null };
   if (bound.approval_binding === null) return false;
+  // D2: the brief's policy approval holds while the brief still covers the
+  // proposal as it is read again (its class included) and the binding is
+  // unchanged; the classifier's authority is not its source.
+  if (p.approver_authority === 'policy') {
+    const fresh = facts.classification ?? p.classified_change_kind;
+    if (fresh !== 'tightening' || policyCoverage(tx, p).reason !== null) return false;
+    return canonical(now) === canonical(JSON.parse(bound.approval_binding));
+  }
   if (authorityNow() !== 'authoritative') return false;
   return canonical(now) === canonical(JSON.parse(bound.approval_binding));
 }
@@ -338,13 +356,14 @@ function bindingHolds(tx: Tx, p: ProposalRow, intent: string | null, facts: Fact
 // they now are (the driver's ruling 5).
 export function withdrawReviewerApproval(tx: Tx, proposal: string): void {
   const p = getProposal(tx, proposal);
-  if (!p || p.status !== 'approved' || p.approver_authority !== 'reviewer') return;
+  if (!p || p.status !== 'approved' || (p.approver_authority !== 'reviewer' && p.approver_authority !== 'policy')) return;
   const status = p.classified_change_kind === 'tightening' ? 'classified' : 'awaiting_human';
   tx.db
     .prepare('UPDATE "protected_proposals" SET "status" = ?, "approver" = NULL, "approver_authority" = NULL, "approved_at" = NULL, "approval_binding" = NULL WHERE "id" = ?')
     .run(status, p.id);
   const kind = CORRECTION_KIND[p.classified_change_kind ?? ''] as DecisionKind | undefined;
-  if (kind) raiseQuestion(tx, { project: p.project, kind, subjectType: 'protected_proposal', subjectId: p.id });
+  const evidence = p.approver_authority === 'policy' ? { evidence: { policy_not_covered: 'policy_approval_withdrawn: the binding changed before the application' } } : {};
+  if (kind) raiseQuestion(tx, { project: p.project, kind, subjectType: 'protected_proposal', subjectId: p.id, ...evidence });
 }
 
 // Immediately before an application's journal intent (D1 §10.5; D3 §3.3):
@@ -393,7 +412,7 @@ export function revalidateOperation(tx: Tx, args: { operation: string; inputs: C
     inputs.intent ??
     (tx.db.prepare(`SELECT "id" FROM "effect_intents" WHERE "operation" = ? AND "kind" = 'protected_application'`).get(op.id) as { id: string } | undefined)?.id ??
     null;
-  if (intent === null && p.approver_authority !== 'reviewer') return true;
+  if (intent === null && p.approver_authority !== 'reviewer' && p.approver_authority !== 'policy') return true;
   // An intent already done or invalidated is not this check's.
   if (intent !== null) {
     const row = tx.db.prepare('SELECT "status" FROM "effect_intents" WHERE "id" = ?').get(intent) as { status: string } | undefined;
@@ -443,7 +462,7 @@ export function applicationDiverged(tx: Tx, args: { proposal: string; intent: st
     invalidateIntent(tx, args.intent);
     return true;
   }
-  if (p.approver_authority !== 'reviewer') return false;
+  if (p.approver_authority !== 'reviewer' && p.approver_authority !== 'policy') return false;
   withdrawReviewerApproval(tx, p.id);
   return true;
 }
@@ -471,4 +490,124 @@ export function applicationConflicts(tx: Tx, args: { proposal: string; intent: s
   settleProposalFindings(tx, p.id);
   correctionProposalDecided(tx, { proposal: p.id, applied: false });
   return true;
+}
+
+// ---- D2: the approved brief's own tightenings (DECISIONS item 57) ------------------------------
+
+// Why the brief's policy does not cover a proposal, or null when it does:
+// the project is a rapid prototype whose current iteration's brief is
+// approved and its work open (policy-fix.ts briefScope); the proposal was
+// made by a run of that iteration (its own authoring or correction, never
+// a predecessor's); its import boundary is declared; and every check it
+// adds or changes covers criteria of the brief's specification revision
+// only, at least one. `criteria` and `checks`: what it was judged on.
+// (What can execute and what is required are the class's: a tightening
+// changes no execution field and no governed field, check_commands and
+// runner_config among them, and only adds required keys with their checks;
+// classify.ts.)
+interface Coverage {
+  reason: string | null;
+  iteration: string | null;
+  decision: string | null;
+  spec_revision: string | null;
+  criteria: string[];
+  checks: string[];
+}
+export function policyCoverage(tx: Tx, p: ProposalRow, c?: Pick<StoredClassification, 'affected_checks' | 'discovery' | 'change_kind'>): Coverage {
+  const none = (reason: string, extra: Partial<Coverage> = {}): Coverage => ({ reason, iteration: null, decision: null, spec_revision: null, criteria: [], checks: [], ...extra });
+  const scope = briefScope(tx.db, p.project);
+  if (scope === null) return none('not_rapid_prototype');
+  if ('refused' in scope) return none(scope.refused);
+  const it = scope.iteration;
+  const at = { iteration: it.id, decision: it.brief_decision, spec_revision: it.brief_spec_revision };
+  const cls = c ?? (classificationJson(tx.db, p.id) as unknown as Pick<StoredClassification, 'affected_checks' | 'discovery' | 'change_kind'> | null);
+  if (!cls || !engineClassified(cls as unknown as Record<string, unknown>) && c === undefined) return none('not_classified_by_the_engine', at);
+  if (cls.change_kind !== 'tightening') return none(`classified_${cls.change_kind}`, at);
+  if (p.proposed_by !== 'verifier_run' || runIteration(tx.db, p.run) !== it.id) return none('not_this_iterations_authoring', at);
+  // The plan the proposal's work belongs to must be this iteration's own
+  // (Verifier 2 on M636 (f): a predecessor's narrowed gap authoring ran
+  // while the next iteration was current): its bundle made by a run of the
+  // iteration; a correction's, the finding's run's.
+  const owner = workIteration(tx.db, p.run);
+  if (owner.iteration !== it.id) return none(`not_this_iterations_plan: ${owner.basis}`, at);
+  if (proposalBoundaryErrors(tx.db, p.id).length > 0) return none('import_boundary_undeclared', at);
+  const affected = (cls.affected_checks ?? []).map((a) => a.check).sort();
+  const byKey = new Map((cls.discovery?.checks ?? []).map((x) => [x.key, x]));
+  const criteria = new Set<string>();
+  for (const key of affected) {
+    const def = byKey.get(key);
+    if (!def) return none(`check_not_discovered: ${key}`, { ...at, checks: affected });
+    if (def.criteria.length === 0) return none(`check_covers_no_criterion: ${key}`, { ...at, checks: affected });
+    for (const k of def.criteria) {
+      if (!scope.criteria.has(k)) return none(`criterion_outside_brief: ${k} (check ${key})`, { ...at, checks: affected });
+      criteria.add(k);
+    }
+  }
+  if (affected.length === 0) return none('no_check_changed', at);
+  return { reason: null, ...at, criteria: [...criteria].sort(), checks: affected };
+}
+
+type PolicyResult = { approved: true } | { approved: false; reason: string | null };
+
+// The engine's classification recorded: a covered tightening is approved
+// under the brief's authority (approver `policy:rapid_prototype`, authority
+// `policy`), bound to the correction manifest as it stands, the act recorded
+// in delegated_actions (tightening_applied, authorized by the brief's
+// decision, its scope the criteria, checks, diff and tree), and the ticks
+// after apply it once its binding is revalidated, as a Reviewer's is. The
+// classifier's authority is not consulted: the brief is the owner's own
+// authorization (the driver's design choice, flagged).
+function policyTightening(tx: Tx, p: ProposalRow, c: StoredClassification): PolicyResult {
+  if (p.status !== 'classified' || c.change_kind !== 'tightening') {
+    const cov = policyCoverage(tx, p, c);
+    return { approved: false, reason: cov.reason === 'not_rapid_prototype' ? null : cov.reason };
+  }
+  const cov = policyCoverage(tx, p, c);
+  if (cov.reason !== null) return { approved: false, reason: cov.reason === 'not_rapid_prototype' ? null : cov.reason };
+  approveProposal(tx, p, POLICY_ACTOR, 'policy', { brief_decision: cov.decision, iteration: cov.iteration, spec_revision: cov.spec_revision });
+  const binding = correctionManifest(tx, p.id);
+  tx.db.prepare('UPDATE "protected_proposals" SET "approval_binding" = ? WHERE "id" = ?').run(JSON.stringify(binding), p.id);
+  recordDelegatedAction(tx, {
+    project: p.project,
+    iteration: cov.iteration,
+    kind: 'tightening_applied',
+    subject_type: 'protected_proposal',
+    subject_id: p.id,
+    authorized_by_kind: 'decision',
+    authorized_by: cov.decision,
+    performed_by: POLICY_ACTOR,
+    scope: { criteria: cov.criteria, checks: cov.checks, spec_revision: cov.spec_revision, diff_hash: p.diff_hash, base_revision: p.base_revision, tree: p.tree_id },
+    basis: { change_kind: c.change_kind, classifier_version: c.classifier_version, classifier_authority: c.classifier_authority, effective_version: c.effective_version, elements: c.elements, changes_required_set: p.changes_required_set === 1, run: p.run },
+  });
+  return { approved: true };
+}
+
+const policyEvidence = (r: PolicyResult): { evidence?: Record<string, unknown> } => (!r.approved && r.reason !== null ? { evidence: { policy_not_covered: r.reason } } : {});
+
+// The iteration the work behind a proposal's run belongs to, read from
+// recorded relationships, never from time: a check authoring's plan (its
+// subject's phase_plan, or a gap item's trigger plan) is the iteration's
+// whose run made that plan's bundle (plan_bundles.run → runs.iteration); a
+// check correction's, the iteration of the run that raised its finding.
+// Unknown (no plan, no bundle, no run): iteration null, the basis saying so.
+function workIteration(db: Tx['db'], run: string | null): { iteration: string | null; basis: string } {
+  if (run === null) return { iteration: null, basis: 'the proposal names no run' };
+  const w = db.prepare('SELECT w."id", w."kind", w."subject", w."trigger_source", w."trigger_id" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ?').get(run) as
+    | { id: string; kind: string; subject: string; trigger_source: string; trigger_id: string }
+    | undefined;
+  if (!w) return { iteration: null, basis: `run ${run} has no work item` };
+  let subject: { phase_plan?: unknown; finding?: unknown } = {};
+  try {
+    subject = (JSON.parse(w.subject) as typeof subject) ?? {};
+  } catch {
+    subject = {};
+  }
+  if (w.kind === 'check_correction' && typeof subject.finding === 'string') {
+    const it = (db.prepare('SELECT r."iteration" FROM "findings" f JOIN "runs" r ON r."id" = f."source_run" WHERE f."id" = ?').get(subject.finding) as { iteration: string | null } | undefined)?.iteration ?? null;
+    return { iteration: it, basis: `work ${w.id} corrects finding ${subject.finding}, raised by a run of ${it ?? 'no iteration'}` };
+  }
+  const plan = typeof subject.phase_plan === 'string' ? subject.phase_plan : w.trigger_source === 'authoring_gap' ? w.trigger_id : null;
+  if (plan === null) return { iteration: null, basis: `work ${w.id} names no plan` };
+  const it = (db.prepare('SELECT r."iteration" FROM "phase_plans" p JOIN "plan_bundles" b ON b."id" = p."bundle" JOIN "runs" r ON r."id" = b."run" WHERE p."id" = ?').get(plan) as { iteration: string | null } | undefined)?.iteration ?? null;
+  return { iteration: it, basis: `work ${w.id} belongs to plan ${plan}, whose bundle ${it === null ? 'was made by no run of an iteration' : `was made in iteration ${it}`}` };
 }

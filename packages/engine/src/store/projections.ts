@@ -16,7 +16,7 @@ import { exhaustedLimits, ledgerView } from './transitions/ledger.js';
 import { seamStatusRead } from '../testing/seam.js';
 import { projectNotFound } from './transitions/project.js';
 import { effectiveVersion } from './transitions/protected.js';
-import { dispatchBlocker, requalificationHold } from './transitions/runs.js';
+import { dispatchBlocker, heldByPlan, requalificationHold } from './transitions/runs.js';
 import { type EnvelopeHold, envelopeHold } from './transitions/envelope.js';
 import { DESIGN_PREVIEW_ENV, deployParts, journalEvents, readEnvironment } from './transitions/deploy.js';
 import { observationEnd, readLogs } from './transitions/observe.js';
@@ -520,6 +520,28 @@ function nowOf(db: Db, project: string, runs: ExecutionRun[], decisions: number,
   return { state, primary_action: primary, reason, cause };
 }
 
+// D6 (DECISIONS item 57; M643 (d)): "When a replan parks, surface the
+// dependency immediately": NOW names a deployment-gap authoring held behind
+// the plan under way, whatever NOW's state, with `held_by {work_item,
+// replan, bundle, status, decision}` (runs.ts heldByPlan), at once, not
+// once a hold interval is opened at a tick. Nothing is added otherwise.
+function withPlanHold<T extends { reason: string }>(db: Db, project: string, now: T): T | (T & { held_by: Record<string, unknown> }) {
+  const items = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = 'authoring_gap' AND "status" NOT IN ('complete', 'cancelled') ORDER BY "seq"`).all(project) as WorkRow[];
+  for (const w of items) {
+    const hold = heldByPlan(db, w);
+    if (hold === null) continue;
+    // The sentence is said where the owner can act on the plan (the replan
+    // parked behind its blocker, or the bundle awaiting approval), naming
+    // the plan, not the held item (M642 (e): NOW's reason names only what
+    // the owner's act releases); `held_by` names the item.
+    const owner = hold.status === 'parked' || hold.status === 'awaiting_approval';
+    const on = hold.replan !== null ? `replan ${hold.replan} is ${hold.status}` : `bundle ${hold.bundle} awaits its approval`;
+    const sentence = owner ? ` A check authoring for the deployment's gap waits on the plan under way: ${on}${hold.decision !== null ? `; decision ${hold.decision} resolves it` : ''}. It is not dispatched until the plan is approved, replaced or abandoned.` : '';
+    return { ...now, reason: `${now.reason}${sentence}`, held_by: { work_item: w.id, ...hold } };
+  }
+  return now;
+}
+
 // While the engine's review the deployment's sign-off waits on is queued
 // or running (DECISIONS item 44), NOW is `ready` or `running` with it, never
 // `build_complete`: the readiness's sentence is said after it, so NOW names
@@ -980,7 +1002,7 @@ function projectRead(db: Db, project: string, trees: TreeAnswer[]) {
     }
     if ('unreadable' in read) checksReason = `The automated checks cannot be shown: the store could not be read (${read.unreadable}).`;
     else checks = read.progress;
-    now = nowOf(db, project, runs, decisions, read, () => deploy().now);
+    now = withPlanHold(db, project, nowOf(db, project, runs, decisions, read, () => deploy().now));
   } catch (err) {
     now = unknownNow(err);
     if (!checksRead) checksReason = `The automated checks cannot be shown: the store could not be read (${err instanceof Error ? err.message : String(err)}).`;
@@ -1156,7 +1178,7 @@ export function readDecision(db: Db, args: { project: string; decision: string }
   const d = db
     .prepare(
       `SELECT "id", "project", "kind", "subject_type", "subject_id", "semantic_generation", "status", "question", "options", "dependency_manifest", "preview_hash",
-         "raised_at", "target_seconds", "escalated_at", "answer", "consumed_at", "invalidated_reason"
+         "raised_at", "target_seconds", "escalated_at", "answer", "consumed_at", "invalidated_reason", "evidence"
        FROM "decisions" WHERE "id" = ?`,
     )
     .get(args.decision) as Record<string, unknown> | undefined;
@@ -1180,6 +1202,10 @@ export function readDecision(db: Db, args: { project: string; decision: string }
       answer: parseJson<Record<string, unknown>>((d.answer as string | null) ?? null),
       consumed_at: d.consumed_at,
       invalidated_reason: d.invalidated_reason,
+      // The records and facts the question rests on as stored (D1 A.3),
+      // among them why the approved brief's policy did not act
+      // (DECISIONS item 57: policy_not_covered, policy_fix_refused).
+      evidence: parseJson<unknown>((d.evidence as string | null) ?? null),
     },
   };
 }
@@ -1428,6 +1454,12 @@ export function readWork(db: Db, args: { project: string }) {
       // console's U57): its plan and the criteria and kinds its recorded
       // trigger evidence names; on no other item.
       ...(w.kind === 'check_authoring' && w.trigger_source === 'authoring_gap' ? { authoring: gapAuthoringAsked(db, w) } : {}),
+      // D6 (DECISIONS item 57; M643 (d)): the plan under way it is held
+      // behind, at once (runs.ts heldByPlan); only while it is.
+      ...(() => {
+        const hold = w.kind === 'check_authoring' && w.trigger_source === 'authoring_gap' ? heldByPlan(db, w) : null;
+        return hold === null ? {} : { held_by: hold };
+      })(),
     })),
   };
 }

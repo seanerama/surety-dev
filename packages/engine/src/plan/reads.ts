@@ -198,7 +198,7 @@ function changeRequestsOwing(db: Database, project: string) {
 // clears a reason (a finding's the gate names; the plan's authoring's when
 // AUTHORING_INCOMPLETE), null when none is open; the text is the engine's.
 // null when there is no such evaluation, or it is satisfied or stale.
-function phaseGateHold(db: Database, project: string, plan: { id: string; phase_number: number; generation: number; check_authoring: string | null }) {
+export function phaseGateHold(db: Database, project: string, plan: { id: string; phase_number: number; generation: number; check_authoring: string | null }) {
   const e = db
     .prepare(`SELECT "id", "candidate", "outcome", "reasons", "computed_at", "stale" FROM "gate_evaluations" WHERE "project" = ? AND "gate_kind" = 'phase' AND "phase_plan" = ? AND "plan_generation" = ? ORDER BY rowid DESC LIMIT 1`)
     .get(project, plan.id, plan.generation) as { id: string; candidate: string; outcome: string; reasons: string; computed_at: string; stale: number } | undefined;

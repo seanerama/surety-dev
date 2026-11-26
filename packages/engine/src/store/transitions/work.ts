@@ -15,6 +15,7 @@ import { illegal, nextSeq, notFound } from './common.js';
 import { raiseQuestion } from './queue.js';
 import { designPolicyOf, holdsBeforeBuild, isUiStage } from '../../design/policy.js';
 import type { EventType, Tx } from './tx.js';
+import { clockWorkParked } from './prototype-clock.js';
 import {
   DISPATCHABLE,
   type WorkKind,
@@ -131,6 +132,9 @@ export function transitionWork(tx: Tx, item: WorkRow, to: WorkStatus, changes: W
       item.id,
     );
   tx.emit(eventFor(from, to), { project: item.project, work_item: item.id }, { ...payload, from, to });
+  // D5 (DECISIONS item 57; objection 237): a park opens the runtime clock's
+  // parked interval in its own transaction.
+  if (to === 'parked') clockWorkParked(tx, next);
   // A hold ends when its item leaves `eligible` (N01; SEAM.md §431).
   if (from === 'eligible' && to !== 'eligible') setHold(tx, next, null);
   return next;

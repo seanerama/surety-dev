@@ -17,7 +17,7 @@ import { assertEdge } from './lifecycle.js';
 import { nowIso } from '../../clock.js';
 import { Refusal } from '../../refusal.js';
 import { canonical, notFound, parseJson, sha256 } from './common.js';
-import { type CandidateRow, type CheckRow, TIER_RANK, candidateContent, contentHash, getCandidate, heldByAncestry, predecessors, requiredSet, stagesHeld } from './evidence.js';
+import { type CandidateRow, type CheckRow, TIER_RANK, candidateContent, contentHash, getCandidate, heldByAncestry, isAncestorRecorded, markStale, predecessors, requiredSet, stagesHeld } from './evidence.js';
 import { type Missing, missingSubjects } from '../../checks/scope.js';
 import { unfinishedOperations } from './journal.js';
 import { type VersionRow, effectiveVersion } from './protected.js';
@@ -25,6 +25,7 @@ import { discoveryErrorsOf, readDue, registerDue } from './checks.js';
 import { movingRefs } from './accept.js';
 import { type OobRow, blockingObservation, candidateObservation, nominationRef, recordObservation } from './repo.js';
 import type { Tx } from './tx.js';
+import { type DecisionRow, invalidateDecision } from './decisions.js';
 import { type WorkRow, getWorkItem, observeTrigger, originOfItem, transitionWork } from './work.js';
 import { currentCandidate, findingVerifiable, isObjection, phaseScopeChecks, verifiesByCheck, verifiesCriterion } from './repair.js';
 import { authoringShortfall, unplannedRequirements } from '../../plan/phase.js';
@@ -96,6 +97,9 @@ export interface FindingRow {
   proposed_disposition: string | null;
   proposed_severity_change: string | null;
   proposed_alpha_exception?: string | null;
+  // D6 (migration 0053): a `plan` finding's plan and specification revision.
+  bound_plan?: string | null;
+  bound_spec_revision?: string | null;
 }
 
 // ---- scope ---------------------------------------------------------------------
@@ -315,7 +319,9 @@ export function checkState(db: Db, project: string, check: CheckRow, scope: Pick
 // the row itself and every evaluation made before are left as they are. A
 // Builder's objection keeps its own route (D3 §5 X2) and applies to none.
 export function findingApplies(db: Db, f: FindingRow & { source_role?: string | null }, candidate: CandidateRow): boolean {
-  if (f.scope !== 'project') {
+  if (f.scope === 'plan') {
+    if (!planFindingApplies(db, f, candidate)) return false;
+  } else if (f.scope !== 'project') {
     if (f.candidate === null) {
       if (f.source_role === undefined || isObjection({ source_role: f.source_role, category: f.category })) return false;
     } else if (f.candidate !== candidate.id && !predecessors(db, candidate).includes(f.candidate)) return false;
@@ -324,6 +330,63 @@ export function findingApplies(db: Db, f: FindingRow & { source_role?: string | 
     .prepare(`SELECT 1 FROM "applicability_assessments" WHERE "finding" = ? AND "candidate" = ? AND "status" = 'approved' LIMIT 1`)
     .get(f.id, candidate.id);
   return excluded === undefined;
+}
+
+// D6 (DECISIONS item 57; migration 0053): a finding of scope `plan`
+// reports coverage a phase plan's checks lack, bound to that plan
+// (`bound_plan`). It applies to a candidate of that plan: one in which a
+// stage of the plan is integrated, and no stage of a plan published after
+// it (a later phase's plan, or the plan that replaced it). Unread
+// (no bound plan): it applies to none, never to all.
+export function planFindingApplies(db: Db, f: Pick<FindingRow, 'project'> & { bound_plan?: string | null }, candidate: CandidateRow): boolean {
+  const plan = f.bound_plan ?? null;
+  if (plan === null) return false;
+  const order = db.prepare('SELECT rowid AS "n" FROM "phase_plans" WHERE "id" = ?').get(plan) as { n: number } | undefined;
+  if (!order) return false;
+  const integrated = db
+    .prepare(`SELECT s."phase_plan", s."integrated_revision", p.rowid AS "n" FROM "stages" s JOIN "phase_plans" p ON p."id" = s."phase_plan" WHERE s."project" = ? AND s."integrated_revision" IS NOT NULL`)
+    .all(f.project) as { phase_plan: string; integrated_revision: string; n: number }[];
+  const inCandidate = integrated.filter((s) => isAncestorRecorded(db, f.project, s.integrated_revision, candidate.revision));
+  return inCandidate.some((s) => s.phase_plan === plan) && !inCandidate.some((s) => s.n > order.n);
+}
+
+// A `plan` finding whose plan is no longer the one its coverage is owed by
+// (D6: "Re-evaluate it when the plan is approved, replaced, or
+// abandoned"): the plan replaced (status replaced or stale, or no longer
+// active) or abandoned (the iteration that published it, or in which the
+// finding was raised, discarded) closes it, `resolved` with cause
+// `plan_replaced`, recorded on the finding (resolution_verification) and in
+// its finding.resolved; an open question about it is withdrawn. Returns the
+// findings closed. Read from durable rows at each phase step, so a restart
+// changes nothing.
+export function closePlanFindings(tx: Tx, project: string): string[] {
+  const rows = tx.db
+    .prepare(`SELECT f."id", f."bound_plan", f."source_run", p."status" AS "plan_status", p."active", p."replaced_by" FROM "findings" f LEFT JOIN "phase_plans" p ON p."id" = f."bound_plan"
+              WHERE f."project" = ? AND f."scope" = 'plan' AND f."status" IN ('open', 'dispositioned') ORDER BY f."seq"`)
+    .all(project) as { id: string; bound_plan: string | null; source_run: string | null; plan_status: string | null; active: number | null; replaced_by: string | null }[];
+  const closed: string[] = [];
+  for (const f of rows) {
+    if (f.bound_plan === null) continue;
+    let why: string | null = null;
+    if (f.plan_status === 'replaced' || f.plan_status === 'stale' || f.active === 0) why = `plan ${f.bound_plan} was replaced${f.replaced_by ? ` by ${f.replaced_by}` : ''}`;
+    else {
+      const discarded = tx.db
+        .prepare(
+          `SELECT i."id", i."seq" FROM "prototype_iterations" i WHERE i."project" = ? AND i."status" = 'discarded'
+             AND (i."phase_plan" = ? OR i."id" = (SELECT r."iteration" FROM "runs" r WHERE r."id" = ?)) ORDER BY i."seq" DESC LIMIT 1`,
+        )
+        .get(project, f.bound_plan, f.source_run) as { id: string; seq: number } | undefined;
+      if (discarded) why = `plan ${f.bound_plan} was abandoned: iteration ${discarded.seq} (${discarded.id}) was discarded`;
+    }
+    if (why === null) continue;
+    const proof = { cause: 'plan_replaced', phase_plan: f.bound_plan, replaced_by: f.replaced_by, reason: why };
+    tx.db.prepare(`UPDATE "findings" SET "status" = 'resolved', "resolution_verification" = ? WHERE "id" = ?`).run(JSON.stringify(proof), f.id);
+    tx.emit('finding.resolved', { project, finding: f.id }, proof);
+    for (const d of tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'finding' AND "subject_id" = ? AND "status" = 'open'`).all(f.id) as DecisionRow[]) invalidateDecision(tx, d, why);
+    closed.push(f.id);
+  }
+  if (closed.length > 0) markStale(tx, { project });
+  return closed;
 }
 
 export const BLOCKING_SEVERITIES = ['critical', 'high'];

@@ -22,6 +22,7 @@ import { between } from '../plan/pace.js';
 import { notFound, parseJson } from '../store/transitions/common.js';
 import { type Account, type Amounts, type LedgerRow, type RequestedEstimate, REQUESTED_ESTIMATE_BASIS, REQUESTED_ESTIMATE_RULE, billable, fold, observedSoFar, outstandingReservation, refusalOfRaw } from '../store/transitions/ledger.js';
 import { projectNotFound } from '../store/transitions/project.js';
+import { chargedAt, clockOf } from '../store/transitions/prototype-clock.js';
 import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentDeploymentRequest, runningDeployment, currentIteration, effectiveAllowanceOf, heldSeconds, iterationAccount, iterationControls, iterationVerdict, providerHoldOf, receiptAllowance, unknownAccountingText } from '../store/transitions/prototype.js';
 import { projectPolicy } from '../store/transitions/settings.js';
 import { redactValue } from '../records/redact.js';
@@ -757,7 +758,8 @@ export function readIteration(db: Db, args: { project: string; iteration: string
   // C2k: the time held by a provider refusal is not counted (prototype.ts
   // heldSeconds).
   const runtimeSpan = it.approved_at === null ? null : between(it.approved_at, runtimeEnd, ['the brief approved', 'now']);
-  const runtimeUsed = typeof runtimeSpan === 'number' ? runtimeSpan - heldSeconds(it, Date.parse(runtimeEnd)) : runtimeSpan;
+  // D5 (DECISIONS item 57): what the limit charges (prototype-clock.ts).
+  const runtimeUsed = typeof runtimeSpan === 'number' ? (chargedAt(db, it, Date.parse(runtimeEnd)).charged_seconds ?? runtimeSpan) : runtimeSpan;
   const limit = (k: (typeof PROTOTYPE_LIMIT_KEYS)[number]) => (typeof limits[k] === 'number' ? limits[k]! : null);
   const tokensLimit = limit('prototype_budget_tokens');
   const usdLimit = limit('prototype_budget_usd_estimated');
@@ -901,6 +903,9 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       // C2k: the time a provider refusal held the iteration since its brief
       // was approved, which the runtime limit does not count.
       provider_hold_seconds: it.approved_at === null ? 0 : heldSeconds(it, Date.parse(runtimeEnd)),
+      // D5 (DECISIONS item 57; M639): wall time, the excluded intervals with
+      // their reasons, the time charged to the limit, and its basis.
+      clock: clockOf(db, it, runtimeLimit),
     },
     // Slice E4 (demonstration 9): the iteration's brief, whole, as prepared
     // (and approved, when approved_at is set); null before one is prepared.

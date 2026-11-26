@@ -16,6 +16,8 @@ import { getWorkItem, workItemOfRun } from './work.js';
 import { findingVerification, isObjection } from './repair.js';
 import { effectiveVersion } from './protected.js';
 import { alphaSignoffsUnsigned } from './alpha-review.js';
+import { policyFix, policyRefusedEvidence } from './policy-fix.js';
+import { deploymentEvidenceOf } from './alpha-gap.js';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 export const FINDING_CATEGORIES = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'] as const;
@@ -23,7 +25,7 @@ const RANK: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 }
 const BLOCKING = ['critical', 'high'];
 
 export interface Report {
-  findings?: { category: string; severity: string; message: string; scope?: string; sensitive_area?: string; check?: string; criterion?: string }[];
+  findings?: { category: string; severity: string; message: string; scope?: string; scope_reason?: string; sensitive_area?: string; check?: string; criterion?: string }[];
   signoffs?: { scope: string; module?: string }[];
   dispositions?: { finding: string; disposition: 'fix' | 'defer' | 'accept'; linked_issue?: string; defer_target?: string; remediation?: string; target?: 'plan' }[];
   severity_changes?: { finding: string; to: string }[];
@@ -67,9 +69,16 @@ export function raiseFinding(
   tx: Tx,
   args: {
     project: string;
-    scope: 'project' | 'lineage' | 'candidate';
+    scope: 'project' | 'lineage' | 'candidate' | 'plan';
     candidate: string | null;
     run: string | null;
+    // D6 (DECISIONS item 57; migration 0053): a `plan` finding's plan and
+    // the specification revision it is bound to.
+    bound?: { plan: string; spec_revision: string | null } | null;
+    // The scope the role reported and why the finding is stored as it is,
+    // recorded on the row (`scope_reason`) when the engine stored it at
+    // another scope, or when the role stated its reason for its own.
+    scopeReason?: Record<string, unknown> | null;
     role: string | null;
     category: string;
     severity: string;
@@ -80,7 +89,7 @@ export function raiseFinding(
     // D-1 (objection 209; errata E180): the scope the role reported, when
     // the engine stored it at another (a role's finding whose run's work
     // names no source candidate is a project finding), with the reason.
-    normalized?: { reported_scope: string; scope_reason: 'no_source_candidate' };
+    normalized?: { reported_scope: string; scope_reason: string };
   },
 ): string {
   const id = tx.newId('fnd_');
@@ -97,7 +106,7 @@ export function raiseFinding(
       args.project,
       n,
       args.scope,
-      args.scope === 'project' ? args.project : (args.candidate ?? args.project),
+      args.scope === 'project' ? args.project : args.scope === 'plan' ? (args.bound?.plan ?? args.project) : (args.candidate ?? args.project),
       args.candidate,
       args.run,
       args.role,
@@ -112,10 +121,22 @@ export function raiseFinding(
       // end is weighed against (askUndispositioned).
       tx.storeOrder(),
     );
+  if (args.bound || args.scopeReason) {
+    tx.db
+      .prepare('UPDATE "findings" SET "bound_plan" = ?, "bound_spec_revision" = ?, "scope_reason" = ? WHERE "id" = ?')
+      .run(args.bound?.plan ?? null, args.bound?.spec_revision ?? null, args.scopeReason ? JSON.stringify(args.scopeReason) : null, id);
+  }
   tx.emit(
     'finding.raised',
     { project: args.project, finding: id, run: args.run },
-    { scope: args.scope, ...(args.normalized ?? {}), category: args.category, severity: args.severity, candidate: args.candidate },
+    {
+      scope: args.scope,
+      ...(args.normalized ?? {}),
+      ...(args.bound ? { bound_plan: args.bound.plan, bound_spec_revision: args.bound.spec_revision } : {}),
+      category: args.category,
+      severity: args.severity,
+      candidate: args.candidate,
+    },
   );
   markStale(tx, { project: args.project });
   return id;
@@ -156,6 +177,37 @@ export function alphaCheck(db: Tx['db'], args: { run: string; finding: string })
 // refused the proposal (an unresolved reference, an ineligible finding).
 export type AlphaPrepared = { record: string } | { refusal: string; detail?: string };
 
+// What a run's findings are bound to (D6): the candidate its work names;
+// for a deployment-gap authoring (check_authoring, trigger authoring_gap,
+// its evidence a deployment's), the candidate that evidence names, the one
+// inspected; for any other check authoring naming a phase plan and no
+// candidate, that plan with the specification revision it was prepared
+// against (else the project's latest approved one). Neither otherwise.
+export function findingBinding(
+  db: Tx['db'],
+  item: { project: string; kind: string; trigger_source: string; subject: string; trigger_evidence?: string | null },
+  candidate: CandidateRow | undefined,
+): { candidate: CandidateRow | undefined; plan: { plan: string; spec_revision: string | null } | null; from: 'subject' | 'gap_evidence' | 'plan' | 'none' } {
+  if (candidate) return { candidate, plan: null, from: 'subject' };
+  if (item.kind !== 'check_authoring') return { candidate: undefined, plan: null, from: 'none' };
+  if (item.trigger_source === 'authoring_gap') {
+    let named: string | null = null;
+    try {
+      named = deploymentEvidenceOf(item.trigger_evidence ?? null)?.candidate ?? null;
+    } catch {
+      named = null;
+    }
+    const c = named === null ? undefined : getCandidate(db, named);
+    if (c && c.project === item.project) return { candidate: c, plan: null, from: 'gap_evidence' };
+  }
+  const plan = parseJson<{ phase_plan?: string }>(item.subject)?.phase_plan ?? null;
+  if (typeof plan !== 'string') return { candidate: undefined, plan: null, from: 'none' };
+  const row = db.prepare('SELECT "id", "prepared_against_spec" FROM "phase_plans" WHERE "id" = ? AND "project" = ?').get(plan, item.project) as { id: string; prepared_against_spec: string | null } | undefined;
+  if (!row) return { candidate: undefined, plan: null, from: 'none' };
+  const spec = row.prepared_against_spec ?? ((db.prepare('SELECT "id" FROM "spec_revisions" WHERE "project" = ? ORDER BY "version" DESC LIMIT 1').get(item.project) as { id: string } | undefined)?.id ?? null);
+  return { candidate: undefined, plan: { plan: row.id, spec_revision: spec }, from: 'plan' };
+}
+
 // The run's report, recorded once. `evidence[i]` is the record the main
 // thread published for the i-th applicability entry's evidence; `alpha[i]`
 // what it did with the i-th Alpha exception proposal.
@@ -172,8 +224,56 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
   const role = run.role;
   const project = run.project;
 
+  // D6 (DECISIONS item 57; the owner's ruling of 2026-11-26: "Bind
+  // observations about an implementation to the candidate inspected. Bind
+  // missing check coverage to the applicable plan and spec revision. Reserve
+  // project-wide findings for evidence that actually applies across
+  // versions."): what the run's work inspected (findingBinding).
+  const binding = findingBinding(tx.db, item, candidate);
   for (const f of report.findings ?? []) {
     const reported = (f.scope ?? 'candidate') as 'project' | 'lineage' | 'candidate';
+    const stated = typeof f.scope_reason === 'string' ? f.scope_reason : null;
+    // A role that reports project scope keeps it, its stated reason recorded.
+    if (reported === 'project') {
+      raiseFinding(tx, {
+        project,
+        scope: 'project',
+        candidate: binding.candidate?.id ?? null,
+        run: run.id,
+        role,
+        category: f.category,
+        severity: f.severity,
+        message: f.message,
+        sensitiveArea: f.sensitive_area ?? null,
+        check: f.check ?? null,
+        criterion: f.criterion ?? null,
+        scopeReason: { reported_scope: 'project', stored_scope: 'project', reason: stated },
+      });
+      continue;
+    }
+    // A phase plan's own check authoring, naming no candidate: what it
+    // reports is coverage the plan's checks lack, bound to that plan and its
+    // approved specification revision.
+    if (binding.plan !== null && !isObjection({ source_role: role, category: f.category })) {
+      raiseFinding(tx, {
+        project,
+        scope: 'plan',
+        candidate: null,
+        bound: binding.plan,
+        scopeReason: { reported_scope: reported, stored_scope: 'plan', reason: 'phase_authoring_names_no_candidate', stated },
+        normalized: { reported_scope: reported, scope_reason: 'phase_authoring_names_no_candidate' },
+        run: run.id,
+        role,
+        category: f.category,
+        severity: f.severity,
+        message: f.message,
+        sensitiveArea: f.sensitive_area ?? null,
+        check: f.check ?? null,
+        criterion: f.criterion ?? null,
+      });
+      continue;
+    }
+    const findingCandidate = binding.candidate;
     // D-1 (objection 209; Sean's ruling of 2026-10-23, errata E180; SEAM.md
     // §562): a role's finding raised by a run whose work names no source
     // candidate (a check_correction run, say) applies at project scope, so
@@ -181,12 +281,15 @@ export function recordReport(tx: Tx, args: { run: string; evidence?: (string | n
     // finding with no candidate would apply to none. The scope the role
     // reported and the reason are kept in its finding.raised. A Builder's
     // objection keeps its own route (D3 §5 X2; repair.ts recordObjections).
-    const normalize = candidate === undefined && reported !== 'project' && !isObjection({ source_role: role, category: f.category });
+    const normalize = findingCandidate === undefined && !isObjection({ source_role: role, category: f.category });
     raiseFinding(tx, {
       project,
       scope: normalize ? 'project' : reported,
-      ...(normalize ? { normalized: { reported_scope: reported, scope_reason: 'no_source_candidate' as const } } : {}),
-      candidate: candidate?.id ?? null,
+      ...(normalize ? { normalized: { reported_scope: reported, scope_reason: 'no_source_candidate' }, scopeReason: { reported_scope: reported, stored_scope: 'project', reason: 'no_source_candidate', stated } } : {}),
+      // A deployment-gap authoring's finding is about the candidate its
+      // evidence names (binding.from: 'gap_evidence').
+      ...(!normalize && binding.from === 'gap_evidence' && stated !== null ? { scopeReason: { reported_scope: reported, stored_scope: reported, reason: 'gap_evidence_candidate', stated } } : {}),
+      candidate: findingCandidate?.id ?? null,
       run: run.id,
       role,
       category: f.category,
@@ -535,7 +638,14 @@ export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: 
     // Whether a review reported after it, and on what basis that was read
     // (only where a completed review of its candidate was weighed).
     const raised = f.reviews_weighed === 1 ? { reviewed_after: f.reviewed_after === 1, order_basis: f.reviewed_by_stamps === 1 ? 'timestamp_fallback' : 'seq' } : undefined;
-    if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE, ...(raised ? { raised } : {}) })) n++;
+    // D3 (DECISIONS item 57): a verifiable defect within the approved brief
+    // is fixed on the brief's repair allowance, never asked; a policy that
+    // waits (the check corrected first, a result to come) asks nothing yet;
+    // one that declines says why in the owner's question.
+    const policy = policyFix(tx, f);
+    if (policy !== null && policy.outcome !== 'refused') continue;
+    const evidence = policy?.outcome === 'refused' ? { evidence: policyRefusedEvidence(policy.reason) } : {};
+    if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE, ...(raised ? { raised } : {}), ...evidence })) n++;
   }
   // Recovery (the driver's ruling 5 on the real M444 run; queue.ts
   // reaskOwed): a finding the human accepted through the earlier owed

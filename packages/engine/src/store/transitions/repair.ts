@@ -54,6 +54,7 @@ import { raiseFinding } from './findings.js';
 import { raiseQuestion } from './queue.js';
 import { projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
+import { policyFix } from './policy-fix.js';
 import { type ChainOrigin, type WorkRow, getWorkItem, observeTrigger, transitionWork } from './work.js';
 import { REPLAN_OPTION, stageInActiveSet } from '../../plan/replace.js';
 
@@ -228,6 +229,11 @@ export function reconcileRepair(tx: Tx, itemId: string): void {
   // The fix under way is the repair (L3-1): nothing is taken, and no
   // conflict raised, until it has ended; the stage is then judged at its
   // current candidate, the fix's once it integrated.
+  // DECISIONS item 57, exception E1: a fix the approved brief's policy
+  // would register now for a defect these failures reproduce is registered
+  // first, in this transaction (policy-fix.ts policyFix), so that it counts
+  // as the fix under way below and the stage is not also sent back.
+  policyFixFirst(tx, item, view);
   if (fixUnderway(tx.db, item, view) !== null) return;
 
   const pending = pendingConflicts(tx.db, item, view);
@@ -328,22 +334,51 @@ function heldByChangeSpec(c: CheckConflict | null, view: RepairView): boolean {
 // holding the stage's work (itself or by ancestry): the fix's id, or null.
 // Only a stage_build waits: a fix's own repair is never held, so two items
 // never wait on each other.
+// DECISIONS item 57, exception E1: also a defect finding whose criterion
+// every failed check covers (the check it names may be another covering
+// check, objection 236 option 1), its fix registered by the owner or the
+// brief's policy.
 function fixUnderway(db: Db, item: WorkRow, view: RepairView): string | null {
   if (item.kind !== 'stage_build') return null;
   const keys = view.failed.map((f) => f.check.key);
   if (keys.length === 0) return null;
-  const rows = db
-    .prepare(
-      `SELECT w."id", f."candidate" FROM "work_items" w JOIN "findings" f ON f."id" = json_extract(w."subject", '$.finding')
-       WHERE w."project" = ? AND w."kind" = 'fix' AND w."status" NOT IN ('complete', 'cancelled') AND f."candidate" IS NOT NULL
-         AND f."check" IN (SELECT value FROM json_each(?)) ORDER BY w."seq"`,
-    )
-    .all(item.project, JSON.stringify(keys)) as { id: string; candidate: string }[];
+  const rows = (
+    db
+      .prepare(
+        `SELECT w."id", f."candidate", f."check", f."category", f."criterion" FROM "work_items" w JOIN "findings" f ON f."id" = json_extract(w."subject", '$.finding')
+         WHERE w."project" = ? AND w."kind" = 'fix' AND w."status" NOT IN ('complete', 'cancelled') AND f."candidate" IS NOT NULL ORDER BY w."seq"`,
+      )
+      .all(item.project) as { id: string; candidate: string; check: string | null; category: string; criterion: string | null }[]
+  ).filter((r) => (r.check !== null && keys.includes(r.check)) || coveredByEveryFailure(r, view));
   for (const r of rows) {
     const c = getCandidate(db, r.candidate);
     if (c && heldByAncestry(db, c).includes(item.id)) return r.id;
   }
   return null;
+}
+
+// A defect finding's criterion that every failed repair check covers.
+function coveredByEveryFailure(f: { category: string; criterion?: string | null }, view: RepairView): boolean {
+  if (f.category !== 'defect' || (f.criterion ?? null) === null || view.failed.length === 0) return false;
+  return view.failed.every((x) => (parseJson<string[]>(x.check.criteria ?? '[]') ?? []).includes(f.criterion!));
+}
+
+// E1: each open defect finding with no disposition, on a candidate holding
+// the stage, whose criterion every failed repair check covers, is put to
+// the brief's policy now (a rapid prototype's only; policyFix is null for
+// any other project and records nothing when it declines: the owner's
+// question is the sweep's, as before).
+function policyFixFirst(tx: Tx, item: WorkRow, view: RepairView): void {
+  if (item.kind !== 'stage_build' || view.failed.length === 0) return;
+  const rows = tx.db
+    .prepare(`SELECT * FROM "findings" WHERE "project" = ? AND "status" = 'open' AND "disposition" IS NULL AND "category" = 'defect' AND "criterion" IS NOT NULL AND "candidate" IS NOT NULL ORDER BY "seq"`)
+    .all(item.project) as (FindingRow & { source_role: string | null })[];
+  for (const f of rows) {
+    if (!coveredByEveryFailure(f, view)) continue;
+    const c = getCandidate(tx.db, f.candidate!);
+    if (!c || !heldByAncestry(tx.db, c).includes(item.id)) continue;
+    policyFix(tx, f);
+  }
 }
 
 // The other way: a `fix` waits (held, not failed) while a stage_build whose

@@ -44,7 +44,8 @@ import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, refusedCom
 import { ENV_OOB_OPTIONS, answerEnvironmentChange, changeRow, envChangeManifest } from './observe.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, settleProposalFindings, withdrawApproval } from './protected.js';
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
-import { getRun, heldOnRequalification, refusalOf, requalificationHold } from './runs.js';
+import { getRun, heldByPlan, heldOnRequalification, refusalOf, requalificationHold } from './runs.js';
+import { deploymentEvidenceOf } from './alpha-gap.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
 import { type Tx, delegationOf } from './tx.js';
 import { canaryKindsOf } from '../../trust/canaries.js';
@@ -218,8 +219,21 @@ function workEvidence(tx: Tx, itemId: string): Record<string, unknown> {
   const run = tx.db.prepare('SELECT "id", "result", "transcript" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(itemId) as
     | { id: string; result: string | null; transcript: string | null }
     | undefined;
-  if (!run) return { run: null, result: recordState(tx.db, null), transcript: recordState(tx.db, null) };
-  return { run: run.id, result: recordState(tx.db, run.result), transcript: recordState(tx.db, run.transcript) };
+  // D6 (DECISIONS item 57; M643 (d)): a replan's question lists the work
+  // held behind it (runs.ts heldByPlan), when any is.
+  const held = heldBehindReplan(tx.db, itemId);
+  const dependents = held.length > 0 ? { held_dependents: held } : {};
+  if (!run) return { run: null, result: recordState(tx.db, null), transcript: recordState(tx.db, null), ...dependents };
+  return { run: run.id, result: recordState(tx.db, run.result), transcript: recordState(tx.db, run.transcript), ...dependents };
+}
+
+function heldBehindReplan(db: Db, itemId: string): { work_item: string; kind: string; criteria: string[] }[] {
+  const replan = db.prepare(`SELECT "project", "kind" FROM "work_items" WHERE "id" = ?`).get(itemId) as { project: string; kind: string } | undefined;
+  if (!replan || replan.kind !== 'replan') return [];
+  const items = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = 'authoring_gap' AND "status" NOT IN ('complete', 'cancelled') ORDER BY "seq"`).all(replan.project) as WorkRow[];
+  return items
+    .filter((w) => heldByPlan(db, w)?.replan === itemId)
+    .map((w) => ({ work_item: w.id, kind: w.kind, criteria: deploymentEvidenceOf((w as WorkRow & { trigger_evidence?: string | null }).trigger_evidence ?? null)?.missing.criteria ?? [] }));
 }
 
 // A specification change's correction parked with its obligations open
@@ -1219,7 +1233,8 @@ function findingRow(db: Db, id: string): FindingRow | undefined {
 function findingBinding(tx: Tx, f: FindingRow): { applicable: boolean; candidate_revision: string | null; acceptance_content_hash: string | null } {
   const candidate = f.candidate ? getCandidate(tx.db, f.candidate) : undefined;
   return {
-    applicable: candidate ? findingApplies(tx.db, f, candidate) : f.scope === 'project',
+    // A `plan` finding (D6) binds no candidate: it stands for its plan.
+    applicable: candidate ? findingApplies(tx.db, f, candidate) : f.scope === 'project' || f.scope === 'plan',
     candidate_revision: candidate?.revision ?? null,
     acceptance_content_hash: candidate ? contentHash(tx.db, f.project, candidate) : null,
   };
@@ -1231,7 +1246,7 @@ function findingBinding(tx: Tx, f: FindingRow): { applicable: boolean; candidate
 // as recorded, and its evidence, the report it was raised in and every record
 // a post-write scan raised it from, as they are now.
 function findingScope(f: FindingRow & { subject_id?: string }): Record<string, unknown> {
-  return { scope: f.scope, subject_id: f.subject_id ?? null, candidate: f.candidate };
+  return { scope: f.scope, subject_id: f.subject_id ?? null, candidate: f.candidate, ...(f.scope === 'plan' ? { bound_plan: f.bound_plan ?? null, bound_spec_revision: f.bound_spec_revision ?? null } : {}) };
 }
 
 function findingEvidence(tx: Tx, f: FindingRow & { message?: string }): Record<string, unknown> {
@@ -2394,6 +2409,21 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
 
 // ---- raising, answering, revalidating ---------------------------------------------------
 
+// DECISIONS item 57 (D2, D3): why the approved brief's policy did not act
+// (`policy_not_covered`, `policy_fix_refused`) is carried onto a later
+// generation of the same question raised with no evidence of its own, so
+// the owner always reads the reason. Only those keys; undefined otherwise.
+const POLICY_EVIDENCE_KEYS = ['policy_not_covered', 'policy_fix_refused'];
+function carriedPolicyEvidence(db: Db, args: { project: string | null; kind: string; subjectType: string; subjectId: string; scope?: string }): Record<string, unknown> | undefined {
+  const prior = db
+    .prepare(`SELECT "evidence" FROM "decisions" WHERE "kind" = ? AND "subject_type" = ? AND "subject_id" = ? AND "scope" = ? ORDER BY "semantic_generation" DESC LIMIT 1`)
+    .get(args.kind, args.subjectType, args.subjectId, args.scope ?? 'subject') as { evidence: string } | undefined;
+  const e = parseJson<Record<string, unknown>>(prior?.evidence ?? null);
+  if (!e || Array.isArray(e)) return undefined;
+  const kept = Object.fromEntries(Object.entries(e).filter(([k]) => POLICY_EVIDENCE_KEYS.includes(k)));
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
 // Raise the question of `kind` about a subject as it stands now, or return
 // the open one with the same preview; null if the question does not stand.
 export function raiseQuestion(
@@ -2416,7 +2446,7 @@ export function raiseQuestion(
     manifest: p.manifest,
     blockedWorkItems: p.blockedWorkItems,
     blockedOperation: p.blockedOperation,
-    evidence: args.evidence ?? p.evidence,
+    evidence: args.evidence ?? p.evidence ?? carriedPolicyEvidence(tx.db, args),
     // The caller's facts beside the preview's (decision.raised's payload).
     raised: args.raised === undefined ? p.raised : { ...(p.raised ?? {}), ...args.raised },
   });

@@ -34,7 +34,9 @@ const FORMS: Record<keyof Report, (v: unknown) => boolean> = {
         (f.scope === undefined || ['candidate', 'lineage', 'project'].includes(f.scope as string)) &&
         optString(f.sensitive_area) &&
         optString(f.check) &&
-        optString(f.criterion),
+        optString(f.criterion) &&
+        // D6 (DECISIONS item 57): why the role reports the scope it does.
+        optString(f.scope_reason),
     ),
   // `phase` (D6 §5.8): a Verifier's phase sign-off, on phase_verification work.
   signoffs: (v) => listOf(v, (s) => ['candidate', 'module', 'security', 'phase'].includes(s.scope as string) && optString(s.module)),

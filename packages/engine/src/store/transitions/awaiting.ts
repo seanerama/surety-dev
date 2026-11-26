@@ -85,7 +85,7 @@ export function settleAwaitingItem(tx: Tx, id: string): boolean {
     const open = tx.db.prepare(`SELECT 1 FROM "decisions" WHERE "subject_type" = 'protected_proposal' AND "subject_id" = ? AND "status" = 'open' LIMIT 1`).get(p.id) !== undefined;
     if (open) return true;
     if (p.status === 'approved') {
-      if (p.approver_authority === 'reviewer') return true;
+      if (p.approver_authority === 'reviewer' || p.approver_authority === 'policy') return true;
       const intent = tx.db.prepare(`SELECT 1 FROM "effect_intents" WHERE json_extract("plan", '$.proposal') = ? AND "status" IN ('pending', 'executing') LIMIT 1`).get(p.id);
       if (intent !== undefined) return true;
     }

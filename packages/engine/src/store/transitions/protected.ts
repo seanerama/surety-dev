@@ -200,12 +200,14 @@ export function classifyProposal(tx: Tx, args: { proposal: string; changeKind: C
 }
 
 // An approval is recorded on the proposal (E13): the human's, in the
-// transaction that consumes the decision, or a Reviewer's run's.
-export function approveProposal(tx: Tx, p: ProposalRow, approver: string, authority: 'reviewer' | 'human' | 'policy'): void {
+// transaction that consumes the decision, or a Reviewer's run's, or (D2,
+// DECISIONS item 57) the approved brief's policy's, its event naming the
+// brief's decision (`extra`).
+export function approveProposal(tx: Tx, p: ProposalRow, approver: string, authority: 'reviewer' | 'human' | 'policy', extra: Record<string, unknown> = {}): void {
   tx.db
     .prepare(`UPDATE "protected_proposals" SET "status" = 'approved', "approver" = ?, "approver_authority" = ?, "approved_at" = ? WHERE "id" = ?`)
     .run(approver, authority, tx.at, p.id);
-  tx.emit('protected.approved', { project: p.project, proposal: p.id }, { approver, authority, from: p.status });
+  tx.emit('protected.approved', { project: p.project, proposal: p.id }, { approver, authority, from: p.status, ...extra });
 }
 
 // A Reviewer's approval: store/transitions/classification.ts (D3 §3.3, Q5).

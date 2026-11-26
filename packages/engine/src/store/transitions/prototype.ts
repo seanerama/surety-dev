@@ -14,6 +14,7 @@ import type { Tx } from './tx.js';
 import { prepareByAllowance, raisePreparation } from '../../prototype/brief.js';
 import { Refusal } from '../../refusal.js';
 import { resumeWork } from './work.js';
+import { chargedAt, clockPauseChanged, closeExclusion, openExclusion } from './prototype-clock.js';
 
 type Db = Tx['db'];
 
@@ -267,6 +268,11 @@ interface IterationRowLite {
   provider_hold_since?: string | null;
   provider_hold_run?: string | null;
   provider_hold_ms?: number;
+  // D5 (migration 0053): the clock's basis, and what it is read from.
+  created_at?: string;
+  clock_basis?: string | null;
+  alpha_at?: string | null;
+  ended_at?: string | null;
 }
 
 const iterationById = (db: Db, id: string): IterationRowLite | undefined => db.prepare('SELECT * FROM "prototype_iterations" WHERE "id" = ?').get(id) as IterationRowLite | undefined;
@@ -402,6 +408,10 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
       .prepare(`SELECT COALESCE(SUM(w."repair_attempts"), 0) AS n FROM "work_items" w WHERE w."id" IN (SELECT DISTINCT "work_item" FROM "runs" WHERE "iteration" = ? AND "work_item" IS NOT NULL)`)
       .get(iteration) as { n: number }
   ).n;
+  // D3 (DECISIONS item 57; migration 0053): each fix the brief's policy
+  // registered spends one unit of the iteration's repair allowance
+  // (store/transitions/policy-fix.ts).
+  a.repairs_used += (db.prepare(`SELECT COUNT(*) AS n FROM "delegated_actions" WHERE "iteration" = ? AND "kind" = 'fix_registered'`).get(iteration) as { n: number }).n;
   return a;
 }
 
@@ -541,17 +551,34 @@ export function iterationVerdict(db: Db, it: IterationRowLite, ask: DispatchAsk,
   // not ended by it (it continues to its own deadline and ends through the
   // existing termination and accounting machinery).
   // C2k: the time the iteration was held by a provider refusal is not
-  // counted (heldSeconds).
+  // counted (heldSeconds). D5 (DECISIONS item 57): nor is any interval
+  // recorded as engine-blocked or explicitly paused, their union once
+  // (prototype-clock.ts chargedAt); an ordinary owner wait is charged.
   if (runtime !== null && it.approved_at !== null) {
     const at = nowMs();
-    const held = heldSeconds(it, at);
-    const since = (at - Date.parse(it.approved_at)) / 1000 - held;
+    const t = chargedAt(db, it, at);
+    const since = t.charged_seconds ?? 0;
+    const excluded = t.excluded_seconds;
+    const provider = t.by_reason.provider_refusal ?? 0;
+    const others = (Object.keys(t.by_reason) as (keyof typeof t.by_reason)[]).filter((r) => r !== 'provider_refusal' && (t.by_reason[r] ?? 0) > 0);
     if (Number.isFinite(since) && since > runtime) {
+      const not =
+        excluded <= 0
+          ? ''
+          : others.length === 0
+            ? `, not counting ${Math.floor(excluded)} s held by a provider refusal`
+            : `, not counting ${Math.floor(excluded)} s excluded (${[...(provider > 0 ? ['provider_refusal'] : []), ...others].join(', ')})`;
       return {
         kind: 'final',
         limit: 'runtime',
-        reason: `runtime: prototype_runtime_seconds ${runtime} passed (${Math.floor(since)} s since the brief was approved at ${it.approved_at}${held > 0 ? `, not counting ${Math.floor(held)} s held by a provider refusal` : ''}); no new run is dispatched, and runs already running continue to their own deadlines`,
-        facts: { value: runtime, elapsed_seconds: Math.floor(since), approved_at: it.approved_at, ...(held > 0 ? { provider_hold_seconds: Math.floor(held) } : {}) },
+        reason: `runtime: prototype_runtime_seconds ${runtime} passed (${Math.floor(since)} s since the brief was approved at ${it.approved_at}${not}); no new run is dispatched, and runs already running continue to their own deadlines`,
+        facts: {
+          value: runtime,
+          elapsed_seconds: Math.floor(since),
+          approved_at: it.approved_at,
+          ...(provider > 0 ? { provider_hold_seconds: Math.floor(provider) } : {}),
+          ...(others.length > 0 ? { excluded_seconds: Math.floor(excluded), wall_seconds: Math.floor(t.wall_seconds ?? 0), clock_basis: t.basis } : {}),
+        },
       };
     }
   }
@@ -805,6 +832,7 @@ export function resumeIteration(tx: Tx, args: { project: string; iteration: stri
   if (paused) {
     tx.db.prepare('UPDATE "projects" SET "paused" = 0 WHERE "id" = ?').run(it.project);
     tx.emit('project.resumed', { project: it.project }, {});
+    clockPauseChanged(tx, it.project, false);
   }
   const held = heldByIteration(tx.db, it);
   for (const w of held) resumeWork(tx, { project: it.project, workItem: w });
@@ -900,6 +928,8 @@ export function holdForProviderRefusal(tx: Tx, run: { id: string; project: strin
   // preparationEnded); and its runtime has not started.
   if (it.approved_at === null || it.provider_hold_since) return;
   tx.db.prepare('UPDATE "prototype_iterations" SET "provider_hold_since" = ?, "provider_hold_run" = ? WHERE "id" = ?').run(tx.at, run.id, it.id);
+  // D5: the hold recorded as an interval the clock does not charge.
+  openExclusion(tx, { project: it.project, iteration: it.id, reason: 'provider_refusal', cause_kind: 'run', cause_id: run.id });
   const reason = providerRefusalReason(run.id, refusal);
   tx.db.prepare(`UPDATE "prototype_iterations" SET "status" = 'awaiting_owner', "outcome_reason" = ?, "next_step" = ?, "ended_at" = NULL WHERE "id" = ?`).run(reason, PROVIDER_REFUSAL_NEXT_STEP, it.id);
   tx.emit('prototype.iteration_status_changed', { project: it.project, iteration: it.id }, { from: it.status, to: 'awaiting_owner', next_step: PROVIDER_REFUSAL_NEXT_STEP, reason, provider_refusal: { run: run.id, ...refusal }, provider_hold_since: tx.at });
@@ -918,6 +948,7 @@ export function endProviderHold(tx: Tx, it: { id: string }): number {
   const at = Date.parse(tx.at);
   const added = Math.round(heldSeconds({ ...row, provider_hold_ms: 0 }, at) * 1000);
   tx.db.prepare('UPDATE "prototype_iterations" SET "provider_hold_since" = NULL, "provider_hold_run" = NULL, "provider_hold_ms" = "provider_hold_ms" + ? WHERE "id" = ?').run(added, it.id);
+  closeExclusion(tx, { iteration: it.id, reason: 'provider_refusal' });
   return added;
 }
 

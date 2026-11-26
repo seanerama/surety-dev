@@ -13,6 +13,7 @@ import type { Tx } from '../store/transitions/tx.js';
 import { type HoldDetail, type HoldReason, type WorkRow, setHold } from '../store/transitions/work.js';
 import { PROTOTYPE_LIMIT, askOfItem, enforceIterationLimit, settleIterationRuntime } from '../store/transitions/prototype.js';
 import { syncIterationStatuses } from '../prototype/brief.js';
+import { openDueExclusions } from '../store/transitions/prototype-clock.js';
 
 // The HoldReason a dispatch blocker names, or null.
 export function holdReasonOf(blocker: string): HoldReason | null {
@@ -32,6 +33,9 @@ export function holdReasonOf(blocker: string): HoldReason | null {
 export function markHolds(tx: Tx): number {
   const items = tx.db.prepare(`SELECT * FROM "work_items" WHERE "status" = 'eligible' OR "held" IS NOT NULL ORDER BY "project", "seq"`).all() as (WorkRow & { held: string | null })[];
   let changed = 0;
+  // The runtime clock's intervals the tick observes are opened first, so a
+  // limit is never settled without them (D5; objection 237).
+  openDueExclusions(tx);
   // A rapid prototype's iteration whose runtime has passed is limit_reached
   // at the tick (R4; slice E2), whatever is eligible.
   settleIterationRuntime(tx);

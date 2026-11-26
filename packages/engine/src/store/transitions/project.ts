@@ -16,6 +16,7 @@ import { createIteration, limitsOf, raiseEffect } from './prototype.js';
 import type { CommandResult } from './control.js';
 import { type ProtectedSet, captureProposal, recordInitialVersion } from './protected.js';
 import { raiseQuestion, widenScope } from './queue.js';
+import { clockPauseChanged } from './prototype-clock.js';
 import type { Tx } from './tx.js';
 
 export interface ProjectRow {
@@ -166,6 +167,9 @@ export function setPaused(tx: Tx, args: { project: string; paused: boolean }) {
   if (row.paused !== want) {
     tx.db.prepare('UPDATE "projects" SET "paused" = ? WHERE "id" = ?').run(want, args.project);
     tx.emit(args.paused ? 'project.paused' : 'project.resumed', { project: args.project }, {});
+    // D5 (DECISIONS item 57): an explicit pause is not charged to a rapid
+    // prototype iteration's runtime clock.
+    clockPauseChanged(tx, args.project, args.paused);
   }
   return { project: { id: args.project, paused: args.paused }, events: tx.events.map(({ seq, type }) => ({ seq, type })) };
 }
