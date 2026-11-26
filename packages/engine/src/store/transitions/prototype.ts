@@ -400,6 +400,10 @@ export function iterationAccount(db: Db, project: string, iteration: string): It
       .prepare(`SELECT COALESCE(SUM(w."repair_attempts"), 0) AS n FROM "work_items" w WHERE w."id" IN (SELECT DISTINCT "work_item" FROM "runs" WHERE "iteration" = ? AND "work_item" IS NOT NULL)`)
       .get(iteration) as { n: number }
   ).n;
+  // D3 (DECISIONS item 57; migration 0053): each fix the brief's policy
+  // registered spends one unit of the iteration's repair allowance
+  // (store/transitions/policy-fix.ts).
+  a.repairs_used += (db.prepare(`SELECT COUNT(*) AS n FROM "delegated_actions" WHERE "iteration" = ? AND "kind" = 'fix_registered'`).get(iteration) as { n: number }).n;
   return a;
 }
 

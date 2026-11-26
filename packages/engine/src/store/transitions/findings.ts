@@ -16,6 +16,7 @@ import { getWorkItem, workItemOfRun } from './work.js';
 import { findingVerification, isObjection } from './repair.js';
 import { effectiveVersion } from './protected.js';
 import { alphaSignoffsUnsigned } from './alpha-review.js';
+import { policyFix, policyRefusedEvidence } from './policy-fix.js';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 export const FINDING_CATEGORIES = ['defect', 'requirement_conflict', 'contract_conflict', 'security', 'hygiene'] as const;
@@ -535,7 +536,14 @@ export function askUndispositioned(tx: Tx, args: { project: string; reviewing?: 
     // Whether a review reported after it, and on what basis that was read
     // (only where a completed review of its candidate was weighed).
     const raised = f.reviews_weighed === 1 ? { reviewed_after: f.reviewed_after === 1, order_basis: f.reviewed_by_stamps === 1 ? 'timestamp_fallback' : 'seq' } : undefined;
-    if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE, ...(raised ? { raised } : {}) })) n++;
+    // D3 (DECISIONS item 57): a verifiable defect within the approved brief
+    // is fixed on the brief's repair allowance, never asked; a policy that
+    // waits (the check corrected first, a result to come) asks nothing yet;
+    // one that declines says why in the owner's question.
+    const policy = policyFix(tx, f);
+    if (policy !== null && policy.outcome !== 'refused') continue;
+    const evidence = policy?.outcome === 'refused' ? { evidence: policyRefusedEvidence(policy.reason) } : {};
+    if (raiseQuestion(tx, { project: args.project, kind: 'finding_disposition', subjectType: 'finding', subjectId: f.id, scope: OWED_SCOPE, ...(raised ? { raised } : {}), ...evidence })) n++;
   }
   // Recovery (the driver's ruling 5 on the real M444 run; queue.ts
   // reaskOwed): a finding the human accepted through the earlier owed
