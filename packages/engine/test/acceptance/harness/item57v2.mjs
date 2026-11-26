@@ -145,11 +145,20 @@ export function stringsOf(v, out = []) {
   else if (v && typeof v === 'object') for (const x of Object.values(v)) stringsOf(x, out);
   return out;
 }
-// The reading of "its evidence naming why policy did not cover it": a
-// sentence (a string of at least 20 characters) in the served decision
-// that names the policy (/polic/i) and why (one of the case's terms).
+// The reading of "its evidence naming why policy did not cover it": in the
+// served decision, either an entry whose key names the policy (a key
+// starting `policy_`, other than `policy_revision`) with a non-empty string
+// reason, or a sentence (at least 20 characters) naming the policy
+// (/polic/i) and why (one of the case's terms). Returns the reasons found.
 export const POLICY_WHY = /brief|scope|criteri|command|runner|execut|loosen|weaken|unclassif|iteration|allowance|repair|verif|reproduc|candidate/i;
-export const whyNotPolicy = (decision) => stringsOf(decision).filter((s) => s.length >= 20 && /polic/i.test(s) && POLICY_WHY.test(s));
+export function whyNotPolicy(decision) {
+  const keyed = [];
+  objectsWhere(decision, (o) => {
+    for (const [k, v] of Object.entries(o)) if (/^policy_/.test(k) && k !== 'policy_revision' && typeof v === 'string' && v.trim() !== '') keyed.push(`${k}: ${v}`);
+    return false;
+  });
+  return [...keyed, ...stringsOf(decision).filter((s) => s.length >= 20 && /polic/i.test(s) && POLICY_WHY.test(s))];
+}
 
 // ---- check trees the classifier can call a tightening ------------------------------------------
 //

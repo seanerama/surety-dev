@@ -50,8 +50,11 @@
 //   `nominated_protected_version` the new version and a `verification` work
 //   item about it.
 // - "its evidence naming why" is read as a sentence of the served decision
-//   (GET …/decisions/:d) naming the policy (/polic/i) and why
-//   (harness/item57v2.mjs whyNotPolicy).
+//   (GET …/decisions/:d) giving a reason under a `policy_…` key, or a
+//   sentence naming the policy and why (harness/item57v2.mjs whyNotPolicy).
+// - (e) has a third proposal: an existing check whose declared input file
+//   (a scenario under .surety/checks/run/) is edited, which the classifier
+//   calls `input_changed`, unclassifiable: the owner's question.
 // - (c) R9.1 is in no requirement index (the registered one is spec
 //   version 2, the brief's own); a check covering it is unclassifiable by
 //   the classifier's own rule (discovery_error), so (c) asks the
@@ -122,20 +125,26 @@ const TREES = {
 
 // Iteration 1 at its Alpha; iteration 2's brief approved, phase 2's
 // authoring to write `tree`. Returns {fx, p, it1, two, brief}.
+// (e) an edited input: iteration 1's accept-r2 declares its scenario as its input.
+const SCENARIO = '.surety/checks/run/r2.mjs';
+const R2 = '.surety/checks/defs/accept-r2.json';
+const WITH_INPUT = { ...FILES, [R2]: json({ ...parse(R2), inputs: [SCENARIO] }), [SCENARIO]: "export const expect = 'both listed in order';\n" };
+TREES.edited_input = { ...WITH_INPUT, ...R4, [SCENARIO]: "export const expect = 'both listed in order, and the count shown';\n" };
+const FIRST = { edited_input: WITH_INPUT };
 const DELETES = { loosening: [R3] };
 const authoringOf = (tree, deletes = []) => ({
   steps: [usage(900, 100, 300), ...deletes.map((path) => step.delete(path)), ...Object.entries(tree).map(([path, c]) => write(path, c)), result({ proposal: { rationale: "phase 2's checks", requested_change_kind: 'unclassifiable' } })],
 });
-async function iteration2(t, { name, port, tree, deletes = [] }) {
+async function iteration2(t, { name, port, tree, deletes = [], first = FILES }) {
   const fx = await protoEngine(t, { config: { lease_ttl: 600 } });
-  kindNext(fx, 'check_authoring', [authoringScript({ files: FILES })], authoringScript({ files: FILES }));
+  kindNext(fx, 'check_authoring', [authoringScript({ files: first })], authoringScript({ files: first }));
   const { id: p, it } = await toBrief(fx, { name });
   const env = await briefToAlpha(fx, p, it.id, { port });
   await observedCurrent(fx, p, it.id);
   const made = await ok(fx.engine.post(`/v1/projects/${p}/iterations/${it.id}/iterate`, { change: 'Show the number of open tasks at the top.' }), 201, 'iterate');
   const two = made.iteration.id;
   secondIterationScripts(fx);
-  kindNext(fx, 'check_authoring', [authoringOf(tree, deletes)], authoringScript({ files: FILES }));
+  kindNext(fx, 'check_authoring', [authoringOf(tree, deletes)], authoringScript({ files: first }));
   await scriptDeploy(fx, env);
   await answerOpen(fx, p, 'prototype_preparation_approval');
   await pump(fx, p, statusIs(fx, p, two, 'awaiting_brief_approval'), { what: "iteration 2's brief" });
@@ -255,9 +264,10 @@ describe('M636 the brief authorizes its own check tightenings within its criteri
     ['d', 'check_correction_unclassifiable', '(d) check_commands changed (what can execute)'],
     ['loosening', 'check_correction_loosening', '(e) a loosening'],
     ['unclassifiable', 'check_correction_unclassifiable', '(e) an unclassifiable proposal'],
+    ['edited_input', 'check_correction_unclassifiable', "(e) an existing check's input file edited"],
   ]) {
     test(`${label}: the owner's question as today, its evidence naming why the policy did not cover it`, { timeout: 600_000 }, async (t) => {
-      const J = await iteration2(t, { name: `M636 ${c}`, port: 18670 + Object.keys(TREES).indexOf(c), tree: TREES[c], deletes: DELETES[c] ?? [] });
+      const J = await iteration2(t, { name: `M636 ${c}`, port: 18670 + Object.keys(TREES).indexOf(c), tree: TREES[c], deletes: DELETES[c] ?? [], first: FIRST[c] ?? FILES });
       const P = await untilProposal(J.fx, J.p, (x) => classified(x) && decisionsAbout(J.fx.home, x.id).some((d) => CORRECTION_KINDS.includes(d.kind)), `phase 2's proposal classified and asked (${c})`);
       assert.equal(`check_correction_${P.classified_change_kind}`, kind, `the fixture is live: classified ${kind.replace('check_correction_', '')}`);
       await assertAsked(J, P, kind, label);

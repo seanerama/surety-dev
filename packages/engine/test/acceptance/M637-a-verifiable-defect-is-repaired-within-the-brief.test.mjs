@@ -64,8 +64,14 @@
 //   work item, and the finding's resolution naming the result on the
 //   resulting candidate.
 // - "its evidence saying …" is read as harness/item57v2.mjs whyNotPolicy on
-//   the served question, and for (d) a string naming the allowance
+//   the served question (a reason under a `policy_…` key, or a sentence
+//   naming the policy), and for (d) such a reason naming the allowance
 //   (/allowance|repairs_per_iteration/).
+// - (b)'s correction edits X itself (the same key, a criterion added, its
+//   inputs unchanged: the classifier's `criteria_added`, a tightening), not
+//   an input file of X (which the classifier calls `input_changed`,
+//   unclassifiable, the owner's: M636 (e)), and not a new check beside X:
+//   the finding names X, and it is X on C that must reproduce it.
 // - (d)'s "or the run would exceed the iteration's tokens/USD" and (e)'s
 //   "K outside the brief" are not exercised: a finding's criterion must be
 //   one of the registered index's (invoke/choke.ts), and the index is the
@@ -97,7 +103,6 @@ import {
   resultsOf,
   rows,
   show,
-  stringsOf,
   versionsOfProposal,
   whyNotPolicy,
   workOfKind,
@@ -249,7 +254,7 @@ describe('M637 a verifiable defect within the brief is repaired on the brief\'s 
     assert.deepEqual(fixItems(fx.home, p, S.F), [], '(d) no fix registered');
     const d = await decisionRead(fx, p, q.id);
     assert.ok(whyNotPolicy(d).length > 0, `(d) its evidence says why the policy did not repair it (${show(d).slice(0, 2500)})`);
-    assert.ok(stringsOf(d).some((s) => /allowance|repairs_per_iteration/.test(s) && /polic/i.test(s)), '(d) naming the allowance');
+    assert.ok(whyNotPolicy(d).some((s) => /allowance|repairs_per_iteration/.test(s)), `(d) naming the allowance (${show(whyNotPolicy(d))})`);
     assertNeverByPolicy(fx, S.F, '(d)');
   });
 
