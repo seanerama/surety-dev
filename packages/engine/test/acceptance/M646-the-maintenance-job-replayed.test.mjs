@@ -18,8 +18,9 @@
 // plan did), Verifier phase authoring (226f7c0 + 3f631ef: 33 definitions),
 // Builder stage 1 (eed79f1) and stage 2 (a88fa57 = candidate 2), the
 // Verifier's verification of candidate 2 reporting the production finding
-// (defect, low, R5.5, accept-r5-5), the Verifier's check correction (the
-// tightened R5.5 scenario, harness/wcp/tightened/units-r5.mjs), Builder fix
+// (defect, low, R5.5, accept-r5-5), the Verifier's check correction (one
+// check added for R5.5, accept-r5-5-print, under the approved node command,
+// as 3f631ef added accept-r1-1-unit: harness/wcp/tightened/), Builder fix
 // (1d32e51 = candidate 3), verification, Alpha on `local`. During the plan
 // the owner redeploys iteration 1's Alpha as production did after its
 // restart (item 54): the obsolete gap authoring it queues is counted (0
@@ -27,9 +28,9 @@
 // preview, and asks for a deployment of candidate 3 to `demo`, a second
 // configured environment with a qualified adapter outside the brief.
 //
-// The check boundary is scripted (SEAM.md §190); for each accept-r5-5
-// execution the exit recorded is the real command's (`node
-// .surety/checks/run/check-units.mjs R5.5`) run by the test outside the
+// The check boundary is scripted (SEAM.md §190); for each accept-r5-5 and
+// accept-r5-5-print execution the exit recorded is the real command's (its
+// definition's `node …` command) run by the test outside the
 // engine, no browser, on the candidate's tree and the protected version's
 // checks the execution names (git archive of the project's repository); every
 // other execution exit 0, as production recorded them. The same discriminating
@@ -59,7 +60,7 @@ import { sharedFixture } from './harness/gates.mjs';
 import { eventsOfType } from './harness/journal.mjs';
 import { decisionRead, iterationRead, ok, openDecisionsRead, runsOfIteration } from './harness/prototype.mjs';
 import { tick } from './harness/runs.mjs';
-import { REV, TWO_BOARD, checksOf, codeAt, materialize, printOrder, runCheckUnits } from './harness/wcp/index.mjs';
+import { PRINT_CHECK, REV, TWO_BOARD, checksOf, codeAt, materialize, printOrder, runCheck } from './harness/wcp/index.mjs';
 import { derive } from './harness/wcp/derive-two-board-plan.mjs';
 import { CHANGE, J, PORT, PRINT_FINDING, drive, iterationOneAlpha, one, reached, rows, show, verifications } from './harness/wcp/replay.mjs';
 
@@ -216,7 +217,7 @@ describe('M646 the maintenance job replayed', () => {
       const code = codeAt(rev, scratch);
       const original = materialize(join(scratch, `${name}-original`), code, checksOf(2));
       const tightened = materialize(join(scratch, `${name}-tightened`), code, checksOf(2, { tightened: true }));
-      evidence[name] = { original: runCheckUnits(original), tightened: runCheckUnits(tightened), print: printOrder(original) };
+      evidence[name] = { original: runCheck(original, 'accept-r5-5'), tightened: runCheck(tightened, PRINT_CHECK), print: printOrder(original) };
     }
     evidence.derived = await derive(scratch);
     R = await replay(shared.context);
@@ -228,9 +229,9 @@ describe('M646 the maintenance job replayed', () => {
     assert.deepEqual(evidence.derived.layout.boards.map((b) => [b.lengthMm, b.freeMm]), [[1000, 194], [500, 97]], 'boards 1000 mm and 500 mm, offcuts 194 mm and 97 mm');
   });
 
-  test('the discriminating evidence outside the engine: the real accept-r5-5 passes on a88fa57 and 1d32e51; the tightened one fails on a88fa57 and passes on 1d32e51; with the saved plan the unit follows the first board diagram on a88fa57 and precedes it on 1d32e51', () => {
+  test('the discriminating evidence outside the engine: the real accept-r5-5 passes on a88fa57 and 1d32e51; the correction\'s accept-r5-5-print fails on a88fa57 and passes on 1d32e51; with the saved plan the unit follows the first board diagram on a88fa57 and precedes it on 1d32e51', () => {
     const exits = Object.fromEntries(['stage2', 'fix'].flatMap((n) => [[`${n} original`, evidence[n].original.status], [`${n} tightened`, evidence[n].tightened.status]]));
-    assert.deepEqual(exits, { 'stage2 original': 0, 'stage2 tightened': 1, 'fix original': 0, 'fix tightened': 0 }, `the real exits (${show(exits)}); tightened on a88fa57: ${evidence.stage2.tightened.out.split('\n').filter((l) => l.includes('FAIL')).join(' | ')}`);
+    assert.deepEqual(exits, { 'stage2 original': 0, 'stage2 tightened': 1, 'fix original': 0, 'fix tightened': 0 }, `the real exits (original = accept-r5-5, tightened = accept-r5-5-print) (${show(exits)}); accept-r5-5-print on a88fa57: ${evidence.stage2.tightened.out.split('\n').filter((l) => l.includes('FAIL')).join(' | ')}`);
     for (const unit of ['mm', 'in']) {
       const a = evidence.stage2.print[unit];
       const f = evidence.fix.print[unit];
@@ -283,12 +284,13 @@ describe('M646 the maintenance job replayed', () => {
     assert.deepEqual([runs.length, findings.length, decisions.length], [0, 0, 0], `0 runs, 0 findings, 0 decisions from ${gaps[0].id} (${show({ runs, findings, decisions })})`);
   });
 
-  test('candidate review detects the print defect on candidate 2; the tightened R5.5 reproduces it (real exit 1); a repair authorized by the brief corrects it; candidate 3 passes the tightened R5.5 (real exit 0); the real accept-r5-5 passed candidate 2 (non-regression only)', (t) => {
+  test('candidate review detects the print defect on candidate 2; the correction\'s accept-r5-5-print reproduces it (real exit 1); a repair authorized by the brief corrects it; candidate 3 passes accept-r5-5-print (real exit 0); the real accept-r5-5 passed candidate 2 (non-regression only)', (t) => {
     const { fx, p, real } = R;
     const its = candidatesOf(fx.home, p).filter((c) => c.seq > R.c1.seq);
     t.diagnostic(`iteration 2's candidates: ${show(its.map((c) => [c.id, c.revision?.slice(0, 10), c.superseded_by ?? null]))}`);
-    t.diagnostic(`real accept-r5-5 runs: ${show(real.map((r) => [r.candidate, r.revision.slice(0, 10), `v${r.version_seq}`, r.tightened ? 'tightened' : 'original', r.exit]))}`);
+    t.diagnostic(`real runs: ${show(real.map((r) => [r.key, r.candidate, r.revision.slice(0, 10), `v${r.version_seq}`, r.exit]))}`);
     const findings = findingsOf(fx.home, p).filter((f) => f.criterion === 'R5.5' && f.check === 'accept-r5-5');
+    t.diagnostic(`the print finding: ${show(findings.map((f) => ({ id: f.id, scope: f.scope, status: f.status, disposition: f.disposition, authority: f.disposition_authority, by: f.disposition_by, resolution: J(f.resolution_verification) })))}`);
     assert.equal(findings.length, 1, `one print finding (${show(findings)})`);
     const F = findings[0];
     const c2 = F.candidate;
@@ -297,20 +299,21 @@ describe('M646 the maintenance job replayed', () => {
     assert.deepEqual([F.category, F.proposed_severity, F.effective_severity], ['defect', 'low', 'low'], 'defect, low');
     assert.equal(J(F.severity_history).filter((h) => JSON.stringify(h).includes('policy')).length, 0, 'policy never lowered it');
     const onC2 = real.filter((r) => r.candidate === c2);
-    assert.ok(onC2.some((r) => !r.tightened && r.exit === 0), `the real accept-r5-5 passed on candidate 2 (recorded, not repair evidence) (${show(onC2.map((r) => [r.tightened, r.exit]))})`);
-    assert.ok(onC2.some((r) => r.tightened && r.exit === 1), `the tightened accept-r5-5 failed on candidate 2: the defect reproduced (${show(onC2.map((r) => [r.tightened, r.exit]))})`);
+    assert.ok(onC2.some((r) => r.key === 'accept-r5-5' && r.exit === 0), `the real accept-r5-5 passed on candidate 2 (recorded, not repair evidence) (${show(onC2.map((r) => [r.key, r.exit]))})`);
+    assert.ok(onC2.some((r) => r.key === PRINT_CHECK && r.exit === 1), `the correction's accept-r5-5-print ran on candidate 2 and failed: the defect reproduced (${show(onC2.map((r) => [r.key, r.exit]))})`);
     assert.deepEqual([F.status, F.disposition, F.disposition_authority, F.disposition_by], ['resolved', 'fix', 'policy', 'policy:rapid_prototype'], `fixed by policy within the brief, resolved (${show([F.status, F.disposition, F.disposition_authority, F.disposition_by])})`);
     const fix = workOf(fx.home, p, 'fix');
     assert.equal(fix.length, 1, `one fix (${show(fix.map((w) => [w.id, w.status, w.subject]))})`);
     const c3 = its.at(-1);
     assert.notEqual(c3.id, c2, 'the fix nominated a later candidate');
-    assert.ok(real.some((r) => r.candidate === c3.id && r.tightened && r.exit === 0), `the tightened accept-r5-5 passed on candidate 3 (${show(real.filter((r) => r.candidate === c3.id).map((r) => [r.tightened, r.exit]))})`);
-    // The resolution names the result that verified it (gates.ts: {evaluation, check_result}):
-    // the tightened accept-r5-5 on candidate 3, exit 0, the execution this test ran for real.
+    assert.ok(real.some((r) => r.candidate === c3.id && r.key === PRINT_CHECK && r.exit === 0), `accept-r5-5-print passed on candidate 3 (${show(real.filter((r) => r.candidate === c3.id).map((r) => [r.key, r.exit]))})`);
+    // The resolution names the result that verified it (gates.ts: {evaluation, check_result}),
+    // a passing result on candidate 3 of an execution this test ran for real.
     const verified = J(F.resolution_verification);
     const cr = verified?.check_result ? one(fx.home, 'SELECT "candidate", "exit_status", "execution" FROM "check_results" WHERE "id" = ?', verified.check_result) : null;
     const ran = cr ? real.find((r) => r.execution === cr.execution) : null;
-    assert.ok(cr && cr.candidate === c3.id && cr.exit_status === 0 && ran?.tightened === true, `the resolution names the tightened accept-r5-5's pass on candidate 3 (${show({ verified, cr, ran: ran && { tightened: ran.tightened, exit: ran.exit } })})`);
+    t.diagnostic(`the resolution's result: ${show({ verified, cr, ran: ran && { key: ran.key, exit: ran.exit } })}`);
+    assert.ok(cr && cr.candidate === c3.id && cr.exit_status === 0 && ran, `the resolution names a pass on candidate 3 that this test ran for real (${show({ verified, cr, ran: ran && { key: ran.key, exit: ran.exit } })})`);
   });
 
   test('the plan and the tightenings were the brief\'s: no preparation, architecture, plan, tightening or disposition question in iteration 2; phase 2\'s checks and the R5.5 correction applied by policy', (t) => {

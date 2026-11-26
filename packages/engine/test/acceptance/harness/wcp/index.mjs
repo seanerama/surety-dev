@@ -12,14 +12,14 @@
 //     applied with git apply in a directory of the caller's;
 //   - the protected check trees: iteration 1's (8b965c6) and iteration 2's
 //     (a88fa57, 3f631ef's), with protected-policy.json rewritten to the
-//     engine's own node (as M223's fixture names it), and the tightened
-//     R5.5 scenario (tightened/units-r5.mjs: the Verifier's check
-//     correction in this replay, not a production file);
+//     engine's own node (as M223's fixture names it), and the Verifier's
+//     check correction in this replay (tightened/: an added definition,
+//     accept-r5-5-print, and its scenario; not production files);
 //   - the plan products (spec v1 and v2, both architectures, roadmaps,
 //     phase plans and ADRs) and the saved two-board plan (two-board-plan.json,
 //     derived by derive-two-board-plan.mjs with iteration 1's own store.mjs);
-//   - the real checks run outside the engine: `node
-//     .surety/checks/run/check-units.mjs <criterion>` in a materialized tree
+//   - the real checks run outside the engine: a definition's own `node`
+//     command in a materialized tree
 //     (WCP's own DOM and CSS, no browser), and the page process
 //     (lib/page.mjs) driving direct-scenario.mjs for the print-visible text.
 //
@@ -126,11 +126,18 @@ export const ITERATION2_CHECK_FILES = Object.freeze([
   '.surety/checks/run/scenarios/units-r5.mjs',
 ]);
 
-export const R5_SCENARIO = '.surety/checks/run/scenarios/units-r5.mjs';
-export const TIGHTENED_R5 = readFileSync(join(WCP, 'tightened', 'units-r5.mjs'), 'utf8');
+// The Verifier's check correction of the print finding (not a production
+// file; README.md): one added definition, accept-r5-5-print (the approved
+// node command, check-scenario.mjs as 3f631ef's checks use it, covers R5.5),
+// and its scenario file. accept-r5-5 and every existing file unchanged.
+export const PRINT_CHECK = 'accept-r5-5-print';
+export const CORRECTION = Object.freeze({
+  '.surety/checks/defs/accept-r5-5-print.json': readFileSync(join(WCP, 'tightened', 'accept-r5-5-print.json'), 'utf8'),
+  '.surety/checks/run/scenarios/units-r5-print.mjs': readFileSync(join(WCP, 'tightened', 'units-r5-print.mjs'), 'utf8'),
+});
 
 // The protected check tree of `iteration` (1: 8b965c6's; 2: a88fa57's),
-// `tightened`: with the Verifier's R5.5 scenario. The governed file for this host.
+// `tightened`: with the Verifier's correction added. The governed file for this host.
 export function checksOf(iteration, { tightened = false } = {}) {
   const all = pick(BASE, '.surety/checks/');
   const out = {};
@@ -139,7 +146,7 @@ export function checksOf(iteration, { tightened = false } = {}) {
     out[p] = text;
   }
   out[GOVERNED] = governedForHost();
-  if (tightened) out[R5_SCENARIO] = TIGHTENED_R5;
+  if (tightened) Object.assign(out, CORRECTION);
   return out;
 }
 export const checkKeysOf = (files) => Object.keys(files).filter((p) => p.startsWith('.surety/checks/defs/') && p.endsWith('.json')).map((p) => JSON.parse(files[p]).key).sort();
@@ -202,11 +209,15 @@ export function materialize(dir, code, checks) {
   return writeTree(dir, { ...code, ...checks });
 }
 
-// `node .surety/checks/run/check-units.mjs <criterion>` in `dir`: the real
-// accept check's command (accept-r5-5's definition), run by this process's
-// node with nothing of the engine. Returns {status, signal, out}.
-export function runCheckUnits(dir, criterion = 'R5.5') {
-  const r = spawnSync(process.execPath, ['.surety/checks/run/check-units.mjs', criterion], { cwd: dir, encoding: 'utf8', timeout: 180_000, maxBuffer: 64 * 1024 * 1024 });
+// A check's own command, as its definition in `dir` names it (`node` the
+// governed command: this process's node), run in `dir` with nothing of the
+// engine. accept-r5-5: `node .surety/checks/run/check-units.mjs R5.5`;
+// accept-r5-5-print: `node .surety/checks/run/check-scenario.mjs
+// units-r5-print R5.5`. Returns {status, signal, out}.
+export function runCheck(dir, key) {
+  const def = JSON.parse(readFileSync(join(dir, '.surety/checks/defs', `${key}.json`), 'utf8'));
+  if (def.command[0] !== 'node') throw new Error(`wcp: ${key} does not run the governed node command: ${JSON.stringify(def.command)}`);
+  const r = spawnSync(process.execPath, def.command.slice(1), { cwd: join(dir, def.cwd ?? '.'), encoding: 'utf8', timeout: 180_000, maxBuffer: 64 * 1024 * 1024 });
   return { status: r.status, signal: r.signal, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 

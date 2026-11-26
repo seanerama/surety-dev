@@ -3,8 +3,9 @@
 // Planner on the scripted backend, its roles writing the production
 // products of harness/wcp (README.md), the prototype harness's routes and
 // pump (harness/prototype.mjs), and the scripted check boundary (SEAM.md
-// §190) recording, for every accept-r5-5 execution, the exit status of the
-// real command run by this process outside the engine on exactly the
+// §190) recording, for every accept-r5-5 and accept-r5-5-print execution,
+// the exit status of the real command run by this process outside the
+// engine on exactly the
 // candidate's tree and the protected version's checks the execution names
 // (both read from the project's own repository with git archive); every
 // other execution exit 0, as production recorded them (32/32 on candidates
@@ -42,7 +43,7 @@ import {
 import { qualifyByFixture } from '../deploy/kernel.mjs';
 import { tick } from '../runs.mjs';
 import { withStore } from '../store.mjs';
-import { IDEA, PLAN1, PLAN2, REV, SPEC_V1, SPEC_V2, TIGHTENED_R5, R5_SCENARIO, checksOf, codeAt, delta, materialize, runCheckUnits } from './index.mjs';
+import { CORRECTION, IDEA, PLAN1, PLAN2, PRINT_CHECK, REV, SPEC_V1, SPEC_V2, checksOf, codeAt, delta, runCheck } from './index.mjs';
 
 export const rows = (home, sql, ...p) => withStore(home, (db) => db.prepare(sql).all(...p));
 export const one = (home, sql, ...p) => withStore(home, (db) => db.prepare(sql).get(...p));
@@ -119,7 +120,9 @@ export function wcpScripts(fx, scratch) {
       builder(delta(code[REV.stage1], code[REV.stage2]), 'Unplaced explanations and move refusals in the selected unit (a88fa57)'),
     ],
     fix: [builder(delta(code[REV.stage2], code[REV.fix]), "Fixed R5.5: public/styles.css no longer hides the header's .intro line in print (1d32e51)")],
-    check_correction: [authoring({ [R5_SCENARIO]: TIGHTENED_R5 }, 'tightening', 'R5.5: with the saved two-board plan the printed page must name the unit before the first board diagram; accept-r5-5 passed on candidate 2, which prints the diagrams first.')],
+    // The Verifier's correction: one check added for R5.5 under the approved
+    // node command (as 3f631ef added accept-r1-1-unit), nothing existing changed.
+    check_correction: [authoring(CORRECTION, 'tightening', 'R5.5: accept-r5-5 passed on candidate 2, which prints its board diagrams before naming the unit. Added accept-r5-5-print: with the saved two-board plan the printed page must name the unit before the first board diagram.')],
   };
   for (const [kind, list] of Object.entries(S)) fx.scripted.kindScript(kind, [...list, ...Array(50).fill(PASS)]);
   fx.scripted.kindScript('verification', [PASS]); // iteration 1's; iteration 2's set by verifications()
@@ -166,18 +169,21 @@ export function executionTree(fx, p, x, scratch) {
   return dir;
 }
 
-// Every queued execution recorded: accept-r5-5 with the real command's exit
-// (logged in `real`), every other one 0. Returns nothing; a superseded or
-// cancelled execution is left as the engine moved it.
+// The checks whose recorded exit is the real command's.
+export const REAL_KEYS = Object.freeze(['accept-r5-5', PRINT_CHECK]);
+
+// Every queued execution recorded: accept-r5-5 and accept-r5-5-print with
+// the real command's exit (logged in `real`), every other one 0. A
+// superseded or cancelled execution is left as the engine moved it.
 export async function recordChecks(fx, p, real, scratch) {
   for (const x of queued(fx.home, p)) {
     let exit = 0;
-    if (x.key === 'accept-r5-5') {
+    if (REAL_KEYS.includes(x.key)) {
       const dir = executionTree(fx, p, x, scratch);
-      const run = runCheckUnits(dir);
+      const run = runCheck(dir, x.key);
       exit = run.status;
-      real.push({ execution: x.id, candidate: x.candidate, revision: x.source_revision, protected_version: x.protected_version, version_seq: versionRevision(fx.home, x.protected_version).seq, exit, tightened: run.out.includes('first board diagram'), out: run.out });
-      assert.ok(exit === 0 || exit === 1, `the real accept-r5-5 ran to a judgment on ${x.source_revision} (exit ${exit}, signal ${run.signal}): ${run.out.slice(-800)}`);
+      real.push({ execution: x.id, key: x.key, candidate: x.candidate, revision: x.source_revision, protected_version: x.protected_version, version_seq: versionRevision(fx.home, x.protected_version).seq, exit, out: run.out });
+      assert.ok(exit === 0 || exit === 1, `the real ${x.key} ran to a judgment on ${x.source_revision} (exit ${exit}, signal ${run.signal}): ${run.out.slice(-800)}`);
     }
     for (const to of ['materializing', 'running', 'collecting', 'recorded']) {
       const res = await fx.engine.post('/v1/harness/fixtures/check-execution', { execution: x.id, to, ...(to === 'recorded' ? { exit_status: exit } : {}) });

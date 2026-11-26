@@ -8,20 +8,20 @@
 // (M646-the-maintenance-job-replayed) replays the job and counts; this file
 // shows the same repair under the engine's runner.
 //
-// The fixture (harness/wcp, README.md): two projects on one engine, each
-// with iteration 2's R5 checks (accept-r5-1 to accept-r5-5 and the scripts
-// under .surety/checks/run, as a88fa57 has them; protected-policy.json
-// rewritten to the engine's own node): `original` with WCP's own
-// units-r5.mjs, `tightened` with the Verifier's check correction
-// (harness/wcp/tightened/units-r5.mjs). In each, a Builder's stage writes
-// a88fa57's code (candidate 2 of production, the print defect), and a fix
-// writes 1d32e51's styles.css (candidate 3, the print fix).
-// (a) the tightened accept-r5-5 fails on a88fa57 (the runner's own exit, 1,
-//     with the two print-order assertions failing in its output) and passes
-//     on 1d32e51; the stage gate on a88fa57 names it CHECK_NOT_PASSED;
-// (b) the original accept-r5-5 passes on both (recorded as non-regression
+// The fixture (harness/wcp, README.md): one project with iteration 2's R5
+// checks (accept-r5-1 to accept-r5-5 and the scripts under .surety/checks/run,
+// as a88fa57 has them; protected-policy.json rewritten to the engine's own
+// node) and the Verifier's check correction added (accept-r5-5-print and its
+// scenario, harness/wcp/tightened/: the approved node command,
+// check-scenario.mjs, covers R5.5). A Builder's stage writes a88fa57's code
+// (candidate 2 of production, the print defect), and a fix writes
+// 1d32e51's styles.css (candidate 3, the print fix).
+// (a) accept-r5-5-print fails on a88fa57 (the runner's own exit, 1, the two
+//     print-order assertions failing in its output) and passes on 1d32e51;
+//     the stage gate on a88fa57 names it CHECK_NOT_PASSED;
+// (b) WCP's own accept-r5-5 passes on both (recorded as non-regression
 //     only: it never discriminated the defect);
-// (c) accept-r5-1 to accept-r5-4 pass on both candidates of both projects;
+// (c) accept-r5-1 to accept-r5-4 pass on both candidates;
 // (d) the print order, asserted directly over the print-visible text of
 //     each tree with the saved two-board plan loaded: the unit statement
 //     precedes the first board diagram on 1d32e51 and follows it on a88fa57,
@@ -48,21 +48,21 @@ import { changePolicy } from './harness/journal.mjs';
 import { runsOf, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
-import { REV, checksOf, codeAt, delta, materialize, printOrder, walkthrough } from './harness/wcp/index.mjs';
+import { PRINT_CHECK, REV, checksOf, codeAt, delta, materialize, printOrder, walkthrough } from './harness/wcp/index.mjs';
 
-const R5 = ['accept-r5-1', 'accept-r5-2', 'accept-r5-3', 'accept-r5-4', 'accept-r5-5'];
+const R5 = ['accept-r5-1', 'accept-r5-2', 'accept-r5-3', 'accept-r5-4', 'accept-r5-5', PRINT_CHECK];
 const show = (v) => JSON.stringify(v);
 
-// Iteration 2's R5 checks: their definitions, every script under run/, the governed file.
-function r5Checks(tightened) {
-  const all = checksOf(2, { tightened });
+// Iteration 2's R5 checks and the correction: their definitions, every script under run/, the governed file.
+function r5Checks() {
+  const all = checksOf(2, { tightened: true });
   return Object.fromEntries(Object.entries(all).filter(([p]) => !p.startsWith('.surety/checks/defs/') || R5.some((k) => p === `.surety/checks/defs/${k}.json`)).filter(([p]) => !p.startsWith('.surety/checks/post-deploy/')));
 }
 const writes = (files) => Object.entries(files).filter(([, c]) => c !== null).map(([p, c]) => step.write(p, c));
 
 // One project: the stage writes a88fa57's code, then a fix writes 1d32e51's.
-async function project(fx, name, tightened, code) {
-  const p = await pinStep(fx, await checkProject(fx, { files: r5Checks(tightened), tier: 'T1', name }));
+async function project(fx, name, code) {
+  const p = await pinStep(fx, await checkProject(fx, { files: r5Checks(), tier: 'T1', name }));
   // As M223: a failing acceptance check while the fix verifies would send it
   // back to its Builder; this row is about the runner's judgment, so every
   // candidate keeps its commit (repair_attempts_max 0 before the build).
@@ -84,7 +84,7 @@ async function project(fx, name, tightened, code) {
     const r = resultRow(fx.home, rec[k].result);
     return [k, { established: r.execution_established, exit: r.exit_status, out: outputText(fx.home, r), toolchain: rec[k].toolchain?.path ?? null }];
   }));
-  return { p, c2, c3, gate, onC2: judged(onC2), onC3: judged(onC3), checkOf: onC2['accept-r5-5'].check };
+  return { p, c2, c3, gate, onC2: judged(onC2), onC3: judged(onC3), checkOf: onC2[PRINT_CHECK].check };
 }
 
 describe('M646 the print repair on the real check runner', () => {
@@ -105,39 +105,36 @@ describe('M646 the print repair on the real check runner', () => {
     const fx = await sandboxEngine(shared.context, { config: { terminate_grace: 3, kill_grace: 2 } });
     await qualifyRunnerByFixture(fx.engine);
     X.fx = fx;
-    X.original = await project(fx, 'wcp-original', false, code);
-    X.tightened = await project(fx, 'wcp-tightened', true, code);
+    X.wcp = await project(fx, 'wcp', code);
   });
   after(shared.cleanup);
 
-  test('(a) the tightened accept-r5-5 fails on a88fa57 with the runner\'s exit 1, the print-order assertions failing, and the stage gate names it; it passes on 1d32e51', () => {
-    const { onC2, onC3, gate, checkOf } = X.tightened;
-    const a = onC2['accept-r5-5'];
+  test('(a) accept-r5-5-print fails on a88fa57 with the runner\'s exit 1, the print-order assertions failing, and the stage gate names it; it passes on 1d32e51', () => {
+    const { onC2, onC3, gate, checkOf } = X.wcp;
+    const a = onC2[PRINT_CHECK];
     assert.equal(a.toolchain, process.execPath, "the engine's own node ran it");
-    assert.match(a.out, /R5\.5: the print view states the selected unit/, `the fixture is live: WCP's check-units ran in the domain (${a.out.slice(0, 300)})`);
+    assert.match(a.out, /R5\.5: with the saved two-board plan/, `the fixture is live: WCP's check-scenario ran the correction's scenario in the domain (${a.out.slice(0, 300)})`);
     assert.deepEqual([a.established, a.exit], [1, 1], `on a88fa57: failed, exit 1 (${a.out.slice(-1200)})`);
     const fails = a.out.split('\n').filter((l) => /^\s+FAIL /.test(l));
     assert.deepEqual(fails.map((l) => l.trim()), ['FAIL the printed page names the unit (millimetres) before the first board diagram', 'FAIL the printed page names the unit (inches) before the first board diagram'], 'the two print-order assertions are what failed');
-    assert.ok(reasonSubjects(gate, 'CHECK_NOT_PASSED').includes(checkOf), `the stage gate on a88fa57 is not satisfied: CHECK_NOT_PASSED names accept-r5-5 (${show(gate.reasons ?? gate)})`);
-    const b = onC3['accept-r5-5'];
+    assert.ok(reasonSubjects(gate, 'CHECK_NOT_PASSED').includes(checkOf), `the stage gate on a88fa57 is not satisfied: CHECK_NOT_PASSED names accept-r5-5-print (${show(gate.reasons ?? gate)})`);
+    const b = onC3[PRINT_CHECK];
     assert.deepEqual([b.established, b.exit], [1, 0], `on 1d32e51: passed, exit 0 (${b.out.slice(-600)})`);
-    assert.match(b.out, /R5\.5: passed \(30 assertions\)/, 'all 30 assertions held');
+    assert.match(b.out, /R5\.5: passed \(\d+ assertions\)/, 'every assertion held');
   });
 
-  test('(b) the original accept-r5-5 passes on a88fa57 and on 1d32e51 (non-regression only: it never saw the defect)', () => {
-    const { onC2, onC3 } = X.original;
+  test('(b) WCP\'s own accept-r5-5 passes on a88fa57 and on 1d32e51 (non-regression only: it never saw the defect)', () => {
+    const { onC2, onC3 } = X.wcp;
     for (const [rev, on] of [['a88fa57', onC2], ['1d32e51', onC3]]) {
       const r = on['accept-r5-5'];
-      assert.deepEqual([r.established, r.exit], [1, 0], `the original on ${rev}: exit 0 (${r.out.slice(-600)})`);
-      assert.match(r.out, /R5\.5: passed \(21 assertions\)/, `the original's 21 assertions on ${rev}`);
+      assert.deepEqual([r.established, r.exit], [1, 0], `accept-r5-5 on ${rev}: exit 0 (${r.out.slice(-600)})`);
+      assert.match(r.out, /R5\.5: passed \(21 assertions\)/, `its 21 assertions on ${rev}`);
     }
   });
 
-  test('(c) accept-r5-1 to accept-r5-4 pass on both candidates of both projects', () => {
-    for (const name of ['original', 'tightened']) {
-      for (const [rev, on] of [['a88fa57', X[name].onC2], ['1d32e51', X[name].onC3]]) {
-        for (const k of R5.slice(0, 4)) assert.deepEqual([on[k].established, on[k].exit], [1, 0], `${name} ${k} on ${rev} (${on[k].out.slice(-400)})`);
-      }
+  test('(c) accept-r5-1 to accept-r5-4 pass on both candidates', () => {
+    for (const [rev, on] of [['a88fa57', X.wcp.onC2], ['1d32e51', X.wcp.onC3]]) {
+      for (const k of R5.slice(0, 4)) assert.deepEqual([on[k].established, on[k].exit], [1, 0], `${k} on ${rev} (${on[k].out.slice(-400)})`);
     }
   });
 
