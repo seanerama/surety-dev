@@ -82,3 +82,41 @@ export function delegatedActionsOf(db: Tx['db'], project: string, iteration: str
     basis: parse(r.basis),
   }));
 }
+
+// D7 (DECISIONS item 57) and item 62 (the owner, 2026-11-26: "Make the
+// decision read and receipt agree on pre-0053 answers: preserve the recorded
+// answer, timestamp, and any actor information actually stored. Where
+// delegation was never recorded, show 'Delegation not recorded' and avoid
+// inferring that I personally clicked."): who performed an answer or an act,
+// as recorded, in one form for every read that serves it (the decision read,
+// the receipt's owner_answers and owner_acts). A recorded delegation is
+// served with the basis `recorded`; none recorded (an answer or act written
+// before migration 0053, which carries no `delegation` at all) is
+// `delegation: null` with the basis `not_recorded`, never inferred as the
+// owner's or an agent's. Since 0053 the engine records the owner's own act
+// as {performed_by: 'owner'} (delegationOf), never null; a null value
+// carries nothing recorded and is served as not recorded.
+export const DELEGATION_NOT_RECORDED = 'not_recorded';
+export type Performed = { delegation: unknown; basis: 'recorded' | typeof DELEGATION_NOT_RECORDED };
+
+export function performedOf(recorded: unknown): Performed {
+  return recorded !== undefined && recorded !== null ? { delegation: recorded, basis: 'recorded' } : { delegation: null, basis: DELEGATION_NOT_RECORDED };
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+// Who performed a stored answer (decisions.answer, parsed): its own
+// `delegation` key, and only that; a stored answer without the key was
+// recorded before migration 0053.
+export function answerPerformed(stored: unknown): Performed {
+  return performedOf(isRecord(stored) && Object.hasOwn(stored, 'delegation') ? stored.delegation : undefined);
+}
+
+// A stored answer as served: every field exactly as stored (option, note,
+// actor kind, timestamp and whatever else was recorded), with `delegation`
+// and `basis` per answerPerformed. Nothing stored is rewritten; no answer yet
+// is null.
+export function answerAsRecorded(stored: unknown): unknown {
+  if (!isRecord(stored)) return stored;
+  return { ...stored, ...answerPerformed(stored) };
+}

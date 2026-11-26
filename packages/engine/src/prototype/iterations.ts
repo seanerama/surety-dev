@@ -26,7 +26,7 @@ import { chargedAt, clockOf } from '../store/transitions/prototype-clock.js';
 import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentDeploymentRequest, runningDeployment, currentIteration, effectiveAllowanceOf, heldSeconds, iterationAccount, iterationControls, iterationVerdict, providerHoldOf, receiptAllowance, unknownAccountingText } from '../store/transitions/prototype.js';
 import { projectPolicy } from '../store/transitions/settings.js';
 import { redactValue } from '../records/redact.js';
-import { delegatedActionsOf } from '../store/transitions/delegation.js';
+import { answerPerformed, delegatedActionsOf, performedOf } from '../store/transitions/delegation.js';
 import { nextIteratePreparation, preparationAuthorityOf, servedBrief } from './brief.js';
 
 type Db = Database;
@@ -134,13 +134,10 @@ function spanOf(db: Db, it: IterationRow): { from: number; to: number | null } {
   return { from: created(it.id) ?? 0, to: next ? created(next.id) : null };
 }
 
-// D7 (DECISIONS item 57): who performed an answer or an act, as recorded.
-// Recorded before migration 0053: null, with the basis `not_recorded`, never
-// inferred as the owner's or an agent's.
-const NOT_RECORDED = 'not_recorded';
-function performedOf(recorded: unknown): { delegation: unknown; basis: string } {
-  return recorded !== undefined && recorded !== null ? { delegation: recorded, basis: 'recorded' } : { delegation: null, basis: NOT_RECORDED };
-}
+// D7 (DECISIONS item 57; item 62): who performed an answer or an act, as
+// recorded, by the shared rule the decision read serves too (answerPerformed,
+// performedOf): recorded before migration 0053, null with the basis
+// `not_recorded`, never inferred as the owner's or an agent's.
 
 // S7, D7: every answer of the owner's about the iteration's work (an
 // approval, a retry, a disposition, a widening, a confirmation), whoever
@@ -153,9 +150,9 @@ function ownerAnswers(db: Db, it: IterationRow) {
   const span = spanOf(db, it);
   const rows = db
     .prepare(
-      `SELECT d."id", d."kind", d."subject_type", d."subject_id", d."consumed_at", d."answer", a."delegation" AS "approval_delegation",
+      `SELECT d."id", d."kind", d."subject_type", d."subject_id", d."consumed_at", d."answer",
          (SELECT e."seq" FROM "events" e WHERE e."type" = 'decision.consumed' AND json_extract(e."subject", '$.decision') = d."id" LIMIT 1) AS "consumed_seq"
-       FROM "decisions" d LEFT JOIN "approvals" a ON a."decision" = d."id"
+       FROM "decisions" d
        WHERE d."project" = ? AND d."status" = 'consumed' AND json_extract(d."answer", '$.actor') = 'human' AND (
          (d."subject_type" = 'prototype_iteration' AND d."subject_id" = ?)
          OR json_extract(d."dependency_manifest", '$.iteration') = ?
@@ -173,15 +170,17 @@ function ownerAnswers(db: Db, it: IterationRow) {
     subject_id: string;
     consumed_at: string | null;
     answer: string | null;
-    approval_delegation: string | null;
     consumed_seq: number | null;
   }[];
   const seen = new Set<string>();
   return rows
     .filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)))
     .map((r) => {
-      const a = parseJson<{ option?: unknown; delegation?: unknown }>(r.answer);
-      const performed = performedOf(a?.delegation ?? parseJson<Record<string, unknown>>(r.approval_delegation));
+      // The stored answer's own record, as the decision read serves it (item
+      // 62): an answer recorded before 0053 has no delegation, whatever its
+      // approval row holds.
+      const a = parseJson<{ option?: unknown }>(r.answer);
+      const performed = answerPerformed(a);
       return { decision: r.id, kind: r.kind, subject: { type: r.subject_type, id: r.subject_id }, option: typeof a?.option === 'string' ? a.option : null, consumed_at: r.consumed_at, ...performed };
     });
 }
