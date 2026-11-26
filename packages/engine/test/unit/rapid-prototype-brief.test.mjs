@@ -805,6 +805,8 @@ test('D8: under the allowance a new iteration\'s preparation is created at once,
   assert.deepEqual(JSON.parse(w.subject), { cause: 'preparation_allowance' });
   const row = iteration(db, it2);
   assert.deepEqual([row.preparation_authority, row.next_step], ['allowance', 'wait: the brief is being prepared']);
+  assert.equal(row.clock_basis, 'recorded', 'D5: every iteration created from migration 0053 on records its clock basis');
+  assert.equal(iteration(db, p.iteration).clock_basis, 'recorded', 'the first iteration too');
   const read = readIteration(db, { project: p.id, iteration: it2 });
   assert.deepEqual([read.preparation.by, read.preparation.provider, read.preparation.model, read.preparation.paid], ['allowance', 'scripted', 'opus', false]);
   assert.equal(read.preparation.limits.run_tokens, 1_500_000);

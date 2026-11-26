@@ -43,13 +43,16 @@ export function limitsOf(policy: Policy): Record<string, number> {
 // project's next, its limits the effective policy's now.
 // Slice E4 (R7, R8): an Iterate gives the predecessor and the owner's short
 // change request (kept as typed, NULL when none was given).
+// D5 (migration 0053): clock_basis `recorded` on every iteration created
+// from now on, so its excluded intervals are read from the store alone (NULL:
+// created before 0053), never by comparing wall-clock stamps.
 export function createIteration(tx: Tx, args: { project: string; limits: Record<string, number>; predecessor?: string | null; change?: string | null }): string {
   const id = tx.newId('it_');
   const { n } = tx.db.prepare('SELECT COALESCE(MAX("seq"), 0) + 1 AS n FROM "prototype_iterations" WHERE "project" = ?').get(args.project) as { n: number };
   tx.db
     .prepare(
-      `INSERT INTO "prototype_iterations" ("id", "created_at", "project", "seq", "predecessor", "mode", "status", "limits_json", "change_text")
-       VALUES (?, ?, ?, ?, ?, 'rapid_prototype', 'preparing', ?, ?)`,
+      `INSERT INTO "prototype_iterations" ("id", "created_at", "project", "seq", "predecessor", "mode", "status", "limits_json", "change_text", "clock_basis")
+       VALUES (?, ?, ?, ?, ?, 'rapid_prototype', 'preparing', ?, ?, 'recorded')`,
     )
     .run(id, tx.at, args.project, n, args.predecessor ?? null, JSON.stringify(args.limits), args.change ?? null);
   tx.emit('prototype.iteration_created', { project: args.project, iteration: id }, { seq: n, predecessor: args.predecessor ?? null, limits: args.limits, ...(args.predecessor ? { change: args.change ?? null } : {}) });
