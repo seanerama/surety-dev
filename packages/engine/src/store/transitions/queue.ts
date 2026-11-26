@@ -44,7 +44,8 @@ import { answerRolloutPartial, deployBlockerPreview, preemptTeardown, refusedCom
 import { ENV_OOB_OPTIONS, answerEnvironmentChange, changeRow, envChangeManifest } from './observe.js';
 import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invalidateResults, settleProposalFindings, withdrawApproval } from './protected.js';
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
-import { getRun, heldOnRequalification, refusalOf, requalificationHold } from './runs.js';
+import { getRun, heldByPlan, heldOnRequalification, refusalOf, requalificationHold } from './runs.js';
+import { deploymentEvidenceOf } from './alpha-gap.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
 import type { Tx } from './tx.js';
 import { canaryKindsOf } from '../../trust/canaries.js';
@@ -216,8 +217,21 @@ function workEvidence(tx: Tx, itemId: string): Record<string, unknown> {
   const run = tx.db.prepare('SELECT "id", "result", "transcript" FROM "runs" WHERE "work_item" = ? ORDER BY "seq" DESC LIMIT 1').get(itemId) as
     | { id: string; result: string | null; transcript: string | null }
     | undefined;
-  if (!run) return { run: null, result: recordState(tx.db, null), transcript: recordState(tx.db, null) };
-  return { run: run.id, result: recordState(tx.db, run.result), transcript: recordState(tx.db, run.transcript) };
+  // D6 (DECISIONS item 57; M643 (d)): a replan's question lists the work
+  // held behind it (runs.ts heldByPlan), when any is.
+  const held = heldBehindReplan(tx.db, itemId);
+  const dependents = held.length > 0 ? { held_dependents: held } : {};
+  if (!run) return { run: null, result: recordState(tx.db, null), transcript: recordState(tx.db, null), ...dependents };
+  return { run: run.id, result: recordState(tx.db, run.result), transcript: recordState(tx.db, run.transcript), ...dependents };
+}
+
+function heldBehindReplan(db: Db, itemId: string): { work_item: string; kind: string; criteria: string[] }[] {
+  const replan = db.prepare(`SELECT "project", "kind" FROM "work_items" WHERE "id" = ?`).get(itemId) as { project: string; kind: string } | undefined;
+  if (!replan || replan.kind !== 'replan') return [];
+  const items = db.prepare(`SELECT * FROM "work_items" WHERE "project" = ? AND "kind" = 'check_authoring' AND "trigger_source" = 'authoring_gap' AND "status" NOT IN ('complete', 'cancelled') ORDER BY "seq"`).all(replan.project) as WorkRow[];
+  return items
+    .filter((w) => heldByPlan(db, w)?.replan === itemId)
+    .map((w) => ({ work_item: w.id, kind: w.kind, criteria: deploymentEvidenceOf((w as WorkRow & { trigger_evidence?: string | null }).trigger_evidence ?? null)?.missing.criteria ?? [] }));
 }
 
 // A specification change's correction parked with its obligations open
@@ -1207,7 +1221,8 @@ function findingRow(db: Db, id: string): FindingRow | undefined {
 function findingBinding(tx: Tx, f: FindingRow): { applicable: boolean; candidate_revision: string | null; acceptance_content_hash: string | null } {
   const candidate = f.candidate ? getCandidate(tx.db, f.candidate) : undefined;
   return {
-    applicable: candidate ? findingApplies(tx.db, f, candidate) : f.scope === 'project',
+    // A `plan` finding (D6) binds no candidate: it stands for its plan.
+    applicable: candidate ? findingApplies(tx.db, f, candidate) : f.scope === 'project' || f.scope === 'plan',
     candidate_revision: candidate?.revision ?? null,
     acceptance_content_hash: candidate ? contentHash(tx.db, f.project, candidate) : null,
   };
@@ -1219,7 +1234,7 @@ function findingBinding(tx: Tx, f: FindingRow): { applicable: boolean; candidate
 // as recorded, and its evidence, the report it was raised in and every record
 // a post-write scan raised it from, as they are now.
 function findingScope(f: FindingRow & { subject_id?: string }): Record<string, unknown> {
-  return { scope: f.scope, subject_id: f.subject_id ?? null, candidate: f.candidate };
+  return { scope: f.scope, subject_id: f.subject_id ?? null, candidate: f.candidate, ...(f.scope === 'plan' ? { bound_plan: f.bound_plan ?? null, bound_spec_revision: f.bound_spec_revision ?? null } : {}) };
 }
 
 function findingEvidence(tx: Tx, f: FindingRow & { message?: string }): Record<string, unknown> {

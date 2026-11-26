@@ -355,7 +355,8 @@ const FIELDS: Record<string, Record<string, unknown>> = {
         },
         severity: SEVERITY,
         message: { type: 'string', description: `What is wrong and where, so a Builder can fix it. ${FIX_IS_CODE_TEXT}` },
-        scope: { enum: ['candidate', 'lineage', 'project'], description: 'Default candidate.' },
+        scope: { enum: ['candidate', 'lineage', 'project'], description: 'Default candidate. Report project only for evidence that applies across versions, and say why in scope_reason.' },
+        scope_reason: { type: 'string', description: 'Why the finding has the scope you report (required in practice for project scope: the evidence that applies across versions).' },
         sensitive_area: { type: 'string' },
         check: {
           type: 'string',

@@ -37,7 +37,8 @@ import { integrationRef, registryRow, projectRepoRow } from '../store/transition
 import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import { type DecisionRow, invalidateDecision } from '../store/transitions/decisions.js';
-import { gapCriteriaOwedByPlan, gapSupersededReason } from '../store/transitions/alpha-gap.js';
+import { deploymentEvidenceOf, gapCriteriaOwedByPlan, gapSupersededReason } from '../store/transitions/alpha-gap.js';
+import { closePlanFindings } from '../store/transitions/gates.js';
 
 type Db = Tx['db'];
 
@@ -144,8 +145,11 @@ export function phaseStep(tx: Tx, args: { project: string }): PhaseStepResult {
   // A phase verification of a candidate a later one superseded (M545).
   retireSupersededVerifications(tx, args.project);
   // A deployment-gap authoring whose criteria a published plan now owes
-  // (DECISIONS item 57; M641).
+  // (DECISIONS item 57; M641), or whose iteration was discarded (M643).
   retireObsoleteGapAuthorings(tx, args.project);
+  // A plan's missing-coverage findings once that plan is replaced or
+  // abandoned (DECISIONS item 57, D6; M643 (b)).
+  closePlanFindings(tx, args.project);
   const plan = openPlan(tx.db, args.project);
   if (!plan) return completedPhaseGateDue(tx, args.project) ?? NONE;
   const tier = (tx.db.prepare('SELECT "tier" FROM "projects" WHERE "id" = ?').get(args.project) as { tier: string }).tier;
@@ -367,6 +371,13 @@ export function retireObsoleteGapAuthorings(tx: Tx, project: string): string[] {
   const retired: string[] = [];
   for (const w of items) {
     if (tx.db.prepare(`SELECT 1 FROM "runs" WHERE "work_item" = ? LIMIT 1`).get(w.id)) continue;
+    // D6 (M643 (f)): the iteration it was asked in discarded, the plan its
+    // brief asked for is abandoned: the old candidate's scope owes nothing
+    // the owner still asks for, and it is never run.
+    if (retireAbandoned(tx, w)) {
+      retired.push(w.id);
+      continue;
+    }
     const s = gapCriteriaOwedByPlan(tx.db, w);
     if (s === null || s.moved.length === 0) continue;
     const reason = gapSupersededReason(s);
@@ -396,6 +407,33 @@ export function retireObsoleteGapAuthorings(tx: Tx, project: string): string[] {
     );
   }
   return retired;
+}
+
+// A deployment-gap authoring of a rapid prototype asked while an iteration
+// was the project's current one, that iteration since discarded (D6;
+// M643 (f)): cancelled `superseded`, its reason `plan_abandoned` naming the
+// iteration and the criteria, its open decisions invalidated. Only one
+// asked for a deployment's gap (alpha-gap.ts) and never run.
+export const PLAN_ABANDONED = 'plan_abandoned';
+function retireAbandoned(tx: Tx, w: WorkRow & { trigger_evidence: string | null; created_at?: string }): boolean {
+  let ev: ReturnType<typeof deploymentEvidenceOf> = null;
+  try {
+    ev = deploymentEvidenceOf(w.trigger_evidence);
+  } catch {
+    ev = null;
+  }
+  if (ev === null) return false;
+  const created = (tx.db.prepare('SELECT "created_at" FROM "work_items" WHERE "id" = ?').get(w.id) as { created_at: string }).created_at;
+  const it = tx.db
+    .prepare(`SELECT "id", "seq", "status", "outcome_reason" FROM "prototype_iterations" WHERE "project" = ? AND "created_at" <= ? ORDER BY "seq" DESC LIMIT 1`)
+    .get(w.project, created) as { id: string; seq: number; status: string; outcome_reason: string | null } | undefined;
+  if (!it || it.status !== 'discarded') return false;
+  const criteria = Array.isArray(ev.missing.criteria) ? ev.missing.criteria : [];
+  const reason = `${PLAN_ABANDONED}: iteration ${it.seq} (${it.id}), in which this authoring was asked, was discarded${it.outcome_reason ? ` (${it.outcome_reason})` : ''}: the plan its brief asked for is abandoned, and candidate ${ev.candidate}'s scope owes nothing the owner still asks for${criteria.length > 0 ? ` (${criteria.join(', ')})` : ''}`;
+  transitionWork(tx, w, 'cancelled', { blocker: null }, { cause: 'superseded', reason, reason_code: PLAN_ABANDONED, iteration: it.id, candidate: ev.candidate, evaluation: ev.evaluation, criteria, phase_plan: w.trigger_id });
+  tx.db.prepare(`UPDATE "work_items" SET "end_cause" = 'superseded' WHERE "id" = ?`).run(w.id);
+  for (const d of tx.db.prepare(`SELECT * FROM "decisions" WHERE "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open'`).all(w.id) as DecisionRow[]) invalidateDecision(tx, d, reason, { superseded_by: null });
+  return true;
 }
 
 // The replan of the phase after `plan`, once, when the roadmap has one.

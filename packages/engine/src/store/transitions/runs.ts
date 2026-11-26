@@ -302,6 +302,65 @@ export function replanPendingPrerequisites(db: Tx['db'], item: Pick<WorkRow, 'id
   return pending.length > 0 ? pending : null;
 }
 
+// The plan under way a deployment-gap authoring naming criteria waits on
+// (M641; DECISIONS item 57, D6: "When a replan parks, surface the
+// dependency immediately and keep the obsolete task out of dispatch.
+// Elapsed time alone must never release it."): a replan of the project not
+// ended (parked included: `status` as it is, `decision` its blocker
+// question when one is open), else a bundle of a phase awaiting its
+// approval (`decision` the open approval). null when neither is. No
+// deadline or hold bound releases it; only the plan's outcome does.
+export interface PlanHold {
+  replan: string | null;
+  bundle: string | null;
+  status: string;
+  decision: string | null;
+}
+export function planUnderWay(db: Tx['db'], project: string): PlanHold | null {
+  const replan = db.prepare(`SELECT "id", "status", "blocker" FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "status" NOT IN ('complete', 'cancelled') ORDER BY "seq" LIMIT 1`).get(project) as
+    | { id: string; status: string; blocker: string | null }
+    | undefined;
+  if (replan) {
+    let decision: string | null = null;
+    try {
+      const d = (JSON.parse(replan.blocker ?? 'null') as { decision?: unknown } | null)?.decision;
+      decision = typeof d === 'string' ? d : null;
+    } catch {
+      decision = null;
+    }
+    const open = db.prepare(`SELECT "id" FROM "decisions" WHERE "project" = ? AND "subject_type" = 'work_item' AND "subject_id" = ? AND "status" = 'open' ORDER BY "seq" LIMIT 1`).get(project, replan.id) as { id: string } | undefined;
+    if (decision !== null && db.prepare(`SELECT 1 FROM "decisions" WHERE "id" = ? AND "status" = 'open'`).get(decision) === undefined) decision = null;
+    return { replan: replan.id, bundle: null, status: replan.status, decision: decision ?? open?.id ?? null };
+  }
+  const bundle = db
+    .prepare(
+      `SELECT b."id", (SELECT d."id" FROM "decisions" d WHERE d."scope" = b."id" AND d."kind" IN ('architecture_approval', 'plan_approval') AND d."status" = 'open' ORDER BY d."seq" LIMIT 1) AS "decision"
+       FROM "plan_bundles" b WHERE b."project" = ? AND b."status" = 'proposed' AND b."phase_number" IS NOT NULL
+         AND EXISTS (SELECT 1 FROM "decisions" d WHERE d."scope" = b."id" AND d."kind" IN ('architecture_approval', 'plan_approval') AND d."status" = 'open') ORDER BY b.rowid LIMIT 1`,
+    )
+    .get(project) as { id: string; decision: string | null } | undefined;
+  return bundle ? { replan: null, bundle: bundle.id, status: 'awaiting_approval', decision: bundle.decision } : null;
+}
+
+// What holds a work item behind a plan under way, served at once (D6;
+// M643 (d)): a deployment-gap authoring naming criteria no published plan
+// owes yet, while a plan is under way; null for any other item.
+export function heldByPlan(db: Tx['db'], item: WorkRow & { trigger_evidence?: string | null }): PlanHold | null {
+  if (item.kind !== 'check_authoring' || item.trigger_source !== 'authoring_gap') return null;
+  if (item.status === 'complete' || item.status === 'cancelled') return null;
+  let ev: ReturnType<typeof deploymentEvidenceOf> = null;
+  try {
+    ev = deploymentEvidenceOf(item.trigger_evidence ?? null);
+  } catch {
+    ev = null;
+  }
+  if (ev === null || !Array.isArray(ev.missing.criteria) || ev.missing.criteria.length === 0) return null;
+  if (db.prepare('SELECT 1 FROM "runs" WHERE "work_item" = ? LIMIT 1').get(item.id)) return null;
+  const owed = gapCriteriaOwedByPlan(db, { project: item.project, kind: item.kind, trigger_source: item.trigger_source, trigger_evidence: item.trigger_evidence ?? null });
+  if (owed !== null && owed.moved.length > 0) return null;
+  return planUnderWay(db, item.project);
+}
+
 // `ignorePause`: what would hold the item were the project not paused
 // (NOW's `resume`, store/projections.ts); the pause itself is not read.
 export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boolean; canary?: boolean; ignorePause?: boolean } = {}): string | null {
@@ -396,19 +455,9 @@ export function dispatchBlocker(db: Tx['db'], item: WorkRow, opts: { check?: boo
     if (ev !== null && Array.isArray(ev.missing.criteria) && ev.missing.criteria.length > 0) {
       const owed = gapCriteriaOwedByPlan(db, { project: item.project, kind: item.kind, trigger_source: item.trigger_source, trigger_evidence: evidence });
       if (owed !== null && owed.moved.length > 0) return gapSupersededReason(owed);
-      const replan = db.prepare(`SELECT "id", "status" FROM "work_items" WHERE "project" = ? AND "kind" = 'replan' AND "status" NOT IN ('complete', 'cancelled') ORDER BY "seq" LIMIT 1`).get(item.project) as
-        | { id: string; status: string }
-        | undefined;
-      const bundle = replan
-        ? undefined
-        : (db
-            .prepare(
-              `SELECT b."id" FROM "plan_bundles" b WHERE b."project" = ? AND b."status" = 'proposed' AND b."phase_number" IS NOT NULL
-                 AND EXISTS (SELECT 1 FROM "decisions" d WHERE d."scope" = b."id" AND d."kind" IN ('architecture_approval', 'plan_approval') AND d."status" = 'open') ORDER BY b.rowid LIMIT 1`,
-            )
-            .get(item.project) as { id: string } | undefined);
-      if (replan || bundle) {
-        return `depends on the plan under way: ${replan ? `replan ${replan.id} is ${replan.status}` : `bundle ${bundle!.id} awaits its approval`}; ${ev.missing.criteria.join(', ')} may be its own`;
+      const hold = planUnderWay(db, item.project);
+      if (hold !== null) {
+        return `depends on the plan under way: ${hold.replan !== null ? `replan ${hold.replan} is ${hold.status}` : `bundle ${hold.bundle!} awaits its approval`}; ${ev.missing.criteria.join(', ')} may be its own`;
       }
     }
   }
