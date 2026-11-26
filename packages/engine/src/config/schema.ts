@@ -234,6 +234,9 @@ export const DECISION_KINDS = [
   // Rapid prototype, slice E3 (the owner's ruling R5 of 2026-10-28): the
   // bounded authorization of one brief preparation run.
   'prototype_preparation_approval',
+  // DECISIONS item 57, D4 (migration 0053): a deployment to an environment
+  // other than the one the approved brief names, asked before dispatch.
+  'deployment_target_approval',
 ] as const;
 
 export const DECISION_TARGET_RANGE = { min: 300, max: 2_592_000 };
@@ -275,6 +278,8 @@ export const DECISION_TARGET_DEFAULTS: Record<string, number | null> = {
   design_verdicts: 172_800,
   // R5 (slice E3): as the products' approvals, 2 d.
   prototype_preparation_approval: 172_800,
+  // D4 (DECISIONS item 57): as rollout_partial's, for the deployment it holds.
+  deployment_target_approval: 14_400,
 };
 
 // Ungoverned project keys, held in .surety/policy.json (RN R2). The project
@@ -355,6 +360,14 @@ export const PROJECT_POLICY: Record<string, NumberSpec> = {
   prototype_runtime_seconds: int(2700, 300, 86_400),
   prototype_repairs_per_stage: int(2, 0, 10),
   prototype_repairs_per_iteration: int(4, 0, 40),
+  // D8 (DECISIONS item 57; the owner's ruling of 2026-11-26): the opt-in
+  // preparation allowance's limits. A brief preparation under the allowance
+  // is dispatched without a decision only while its run's token limit and
+  // its estimated cost are within these; raising one is a widening.
+  //   prototype_preparation_run_tokens     the preparation run's token limit, at most
+  //   prototype_preparation_usd_estimated  its estimated cost at the price table, at most (an estimate, never a cap)
+  prototype_preparation_run_tokens: int(1_500_000, 10_000, 50_000_000),
+  prototype_preparation_usd_estimated: { default: 15, min: 0, max: 10_000, integer: false },
 };
 
 // The prototype iteration's limit keys (R4), in the order the iteration
@@ -400,6 +413,10 @@ export const BACKEND_ROLE_KEYS: Readonly<Record<string, string>> = {
   designer: 'backend_designer',
 };
 
+// D8 (DECISIONS item 57): the preparation allowance, ordered: granting it
+// (a later value) widens.
+export const PREPARATION_ALLOWANCES = ['off', 'per_iteration'] as const;
+
 // D6 A.2: the autonomy profile (K3) and the Alpha deploy policy (K9).
 export const AUTONOMY_PROFILES = ['step', 'stage', 'phase'] as const;
 export type Autonomy = (typeof AUTONOMY_PROFILES)[number];
@@ -415,7 +432,8 @@ export type AlphaDeployPolicy = (typeof ALPHA_DEPLOY_POLICIES)[number];
 // adds an element the effective value lacks, `coarser` when it names a
 // coarser budget boundary, `never` when no change does.
 export interface OptionSpec {
-  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths' | 'model' | 'size_range' | 'int_list' | 'subset';
+  // `provider_model` (D8): `<provider>/<model>`, a provider of `values` and a model name.
+  type: 'enum' | 'boolean' | 'host_names' | 'absolute_paths' | 'model' | 'size_range' | 'int_list' | 'subset' | 'provider_model';
   // `int_list` (D7 A.7 `design_widths`): 1 to `count.max` distinct integers
   // within `range`; `subset` (`design_orientations`): a non-empty subset of
   // `values`, no repeats.
@@ -427,7 +445,9 @@ export interface OptionSpec {
   // `backend_<role>` keys outside the test mode).
   default: unknown;
   values?: readonly string[];
-  widening: 'added' | 'coarser' | 'later' | 'never';
+  // `changed_while_allowed` (D8): any change of the value widens while the
+  // preparation allowance is (or, with the change, becomes) granted.
+  widening: 'added' | 'coarser' | 'later' | 'never' | 'changed_while_allowed';
 }
 
 export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
@@ -485,6 +505,16 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   assets_required_for: { type: 'enum', values: ['none', 'beta', 'live'], default: 'live', widening: 'never' },
   backend_designer: { type: 'enum', values: REAL_BACKEND_NAMES, default: null, widening: 'never' },
   model_designer: { type: 'model', default: 'opus', widening: 'never' },
+  // D8 (DECISIONS item 57; the owner's ruling of 2026-11-26, "opt-in per
+  // project"): the preparation allowance. `per_iteration` authorizes one
+  // bounded brief preparation run per iteration, of the model named here and
+  // within the limits prototype_preparation_run_tokens and
+  // prototype_preparation_usd_estimated, without a decision; `off` (the
+  // default) asks prototype_preparation_approval as before. Granting is a
+  // widening (a policy_widening decision shows the model and the limits);
+  // changing the model while granted is a widening; revoking is not.
+  prototype_preparation_allowance: { type: 'enum', values: PREPARATION_ALLOWANCES, default: 'off', widening: 'later' },
+  prototype_preparation_model: { type: 'provider_model', values: REAL_BACKEND_NAMES, default: null, widening: 'changed_while_allowed' },
 };
 
 // A JSON number of the right kind inside its range. null, strings and

@@ -74,7 +74,7 @@ export interface FindingRow {
   id: string;
   project: string;
   seq: number;
-  scope: 'project' | 'lineage' | 'candidate';
+  scope: 'project' | 'lineage' | 'candidate' | 'plan';
   candidate: string | null;
   source_run: string | null;
   category: string;

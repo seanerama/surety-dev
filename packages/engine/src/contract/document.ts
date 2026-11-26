@@ -270,6 +270,12 @@ const COLUMN_ENUMS: Record<string, string> = {
   'projects.mode': 'ExecutionMode',
   'prototype_iterations.mode': 'ExecutionMode',
   'prototype_iterations.status': 'IterationStatus',
+  // One approval of a maintenance brief (migration 0053; DECISIONS item 57).
+  'prototype_iterations.preparation_authority': 'PreparationAuthority',
+  'prototype_iterations.clock_basis': 'ClockBasis',
+  'prototype_clock_exclusions.reason': 'ClockExclusionReason',
+  'delegated_actions.kind': 'DelegatedActionKind',
+  'delegated_actions.authorized_by_kind': 'DelegationAuthorityKind',
 };
 
 const pascal = (text: string): string =>

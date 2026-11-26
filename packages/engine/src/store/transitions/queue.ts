@@ -63,6 +63,7 @@ import { designBatchKeyOf } from '../../design/batch-key.js';
 import { DESIGN_APPROVAL, DESIGN_APPROVAL_KEYS, DESIGN_VERDICTS, DESIGN_VERDICTS_KEYS } from '../../design/approval.js';
 import { DESIGN_CONFLICT, DESIGN_CONFLICT_SCOPE } from '../../design/findings.js';
 import { PREPARATION_KEYS, PROTOTYPE_PREPARATION_APPROVAL } from '../../prototype/brief.js';
+import { DEPLOYMENT_TARGET_APPROVAL, DEPLOYMENT_TARGET_KEYS } from './deploy-target.js';
 
 type Db = Tx['db'];
 
@@ -1761,7 +1762,9 @@ export function recordDisposition(
   f: FindingRow,
   args: {
     disposition: 'fix' | 'defer' | 'accept';
-    authority: 'reviewer' | 'human';
+    // `policy` (migration 0053; D3): a fix registered under the approved
+    // brief's repair allowance, never an accept or a defer.
+    authority: 'reviewer' | 'human' | 'policy';
     by: string;
     linked_issue: string | null;
     defer_target: string | null;
@@ -2246,6 +2249,11 @@ export const KINDS: Record<DecisionKind, KindSpec> = {
   get prototype_preparation_approval() {
     return PROTOTYPE_PREPARATION_APPROVAL;
   },
+  // DECISIONS item 57, D4: a deployment outside the approved brief's target
+  // (store/transitions/deploy-target.ts).
+  get deployment_target_approval() {
+    return DEPLOYMENT_TARGET_APPROVAL;
+  },
 };
 
 // What each enabled kind's dependency manifest binds, at least (D1 A.8;
@@ -2292,6 +2300,9 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
   },
   get prototype_preparation_approval() {
     return PREPARATION_KEYS;
+  },
+  get deployment_target_approval() {
+    return DEPLOYMENT_TARGET_KEYS;
   },
   blocker: ['subject_status', 'quarantined', 'cause', 'evidence', 'continuation'],
   stop_confirm: CONTROL_KEYS,

@@ -44,7 +44,10 @@ export type DecisionKind =
   | 'design_due'
   | 'design_verdicts'
   // Rapid prototype, slice E3 (R5): one brief preparation run authorized.
-  | 'prototype_preparation_approval';
+  | 'prototype_preparation_approval'
+  // DECISIONS item 57, D4 (migration 0053): a deployment to an environment
+  // other than the one the approved brief names.
+  | 'deployment_target_approval';
 
 export interface OptionSpec {
   key: string;
