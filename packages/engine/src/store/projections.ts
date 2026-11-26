@@ -12,6 +12,7 @@ import type { Database } from 'better-sqlite3';
 import { nowIso, nowMs } from '../clock.js';
 import { Refusal } from '../refusal.js';
 import { notFound, parseJson } from './transitions/common.js';
+import { answerAsRecorded } from './transitions/delegation.js';
 import { exhaustedLimits, ledgerView } from './transitions/ledger.js';
 import { seamStatusRead } from '../testing/seam.js';
 import { projectNotFound } from './transitions/project.js';
@@ -1199,7 +1200,12 @@ export function readDecision(db: Db, args: { project: string; decision: string }
       raised_at: d.raised_at,
       target_seconds: d.target_seconds,
       escalated_at: d.escalated_at,
-      answer: parseJson<Record<string, unknown>>((d.answer as string | null) ?? null),
+      // The answer exactly as stored (option, note, actor kind, timestamp),
+      // with who performed it by the rule the receipt's owner_answers serves
+      // (DECISIONS item 62): its recorded delegation with the basis
+      // `recorded`, or, recorded before migration 0053, `delegation: null`
+      // with the basis `not_recorded`, never inferred as the owner's click.
+      answer: answerAsRecorded(parseJson<Record<string, unknown>>((d.answer as string | null) ?? null)),
       consumed_at: d.consumed_at,
       invalidated_reason: d.invalidated_reason,
       // The records and facts the question rests on as stored (D1 A.3),

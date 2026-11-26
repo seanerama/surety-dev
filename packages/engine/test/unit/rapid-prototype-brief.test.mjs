@@ -779,6 +779,60 @@ test('D7: the API takes the delegation off the body, validated; absent, the act 
   assert.throws(() => takeDelegation({ delegation: { performed_by: 'agent', agent: 'x', on_behalf: 'y' } }), (e) => e.code === 'unknown_field');
 });
 
+// ---- DECISIONS item 62: the decision read and the receipt agree on pre-0053 answers ----
+
+const { answerAsRecorded, answerPerformed, performedOf } = await import(join(dist, 'store', 'transitions', 'delegation.js'));
+const { readDecision } = await import(join(dist, 'store', 'projections.js'));
+
+test('item 62: one rule for who performed an answer: the stored answer\'s own delegation, recorded, or not_recorded when it has none', () => {
+  const owner = { option: 'approve', note: null, actor: 'human', at: AT, delegation: { performed_by: 'owner' } };
+  assert.deepEqual(answerPerformed(owner), { delegation: { performed_by: 'owner' }, basis: 'recorded' });
+  assert.deepEqual(answerAsRecorded(owner), { ...owner, basis: 'recorded' }, 'a post-0053 answer: as stored, with basis recorded');
+  const legacy = { option: 'reject', note: 'not yet', actor: 'human', at: AT };
+  assert.deepEqual(answerPerformed(legacy), { delegation: null, basis: 'not_recorded' });
+  assert.deepEqual(answerAsRecorded(legacy), { option: 'reject', note: 'not yet', actor: 'human', at: AT, delegation: null, basis: 'not_recorded' }, 'a pre-0053 answer: option, note, actor kind and time as stored, never inferred');
+  assert.deepEqual(Object.keys(legacy), ['option', 'note', 'actor', 'at'], 'the stored answer is not rewritten');
+  // The engine never writes a null delegation (delegationOf); a null carries nothing recorded.
+  assert.deepEqual(answerPerformed({ ...legacy, delegation: null }), { delegation: null, basis: 'not_recorded' });
+  assert.deepEqual(answerAsRecorded({ ...legacy, applied_to: 'work' }).applied_to, 'work', 'whatever else was recorded is kept');
+  assert.equal(answerAsRecorded(null), null, 'no answer yet stays null');
+  assert.deepEqual(performedOf(undefined), { delegation: null, basis: 'not_recorded' });
+  assert.deepEqual(performedOf({ performed_by: 'agent:driver' }), { delegation: { performed_by: 'agent:driver' }, basis: 'recorded' });
+});
+
+test('item 62: a pre-0053 answer (stored with no delegation key) is served by the decision read as stored, delegation null with basis not_recorded, as the receipt serves it', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create();
+  const prep = decisionsOf(db, p.id, 'prototype_preparation_approval')[0];
+  assert.equal(readDecision(db, { project: p.id, decision: prep.id }).decision.answer, null, 'an open decision has no answer: null, nothing added');
+  answer(db, p.id, prep);
+  const b = prepareBrief(db, p.id);
+  transact(db, AGENT, (tx) => answerQueued(tx, { project: p.id, decision: b.decision.id, option: 'approve', preview_hash: b.decision.preview_hash, note: null }));
+  // The preparation answer as an engine before migration 0053 wrote it: the JSON without the key, through the store directly.
+  const LEGACY_AT = '2026-10-01T09:30:00.000Z';
+  const legacy = { option: 'approve', note: 'go ahead', actor: 'human', at: LEGACY_AT };
+  db.prepare('UPDATE decisions SET answer = ? WHERE id = ?').run(JSON.stringify(legacy), prep.id);
+  db.prepare('UPDATE approvals SET delegation = NULL WHERE decision = ?').run(prep.id);
+  const served = readDecision(db, { project: p.id, decision: prep.id }).decision.answer;
+  assert.deepEqual(served, { ...legacy, delegation: null, basis: 'not_recorded' }, 'recorded option, note, actor kind and timestamp exactly as stored; delegation not recorded');
+  assert.equal(getDecisionRow(db, prep.id).answer, JSON.stringify(legacy), 'the stored row is not rewritten by the read');
+  const receipt = iterationReceipt(db, { project: p.id, iteration: p.iteration });
+  const entry = receipt.owner_answers.find((a) => a.decision === prep.id);
+  assert.deepEqual([entry.delegation, entry.basis], [served.delegation, served.basis], 'the decision read and the receipt agree');
+  // A post-0053 answer: its recorded delegation with basis recorded, in both reads.
+  const agentServed = readDecision(db, { project: p.id, decision: b.decision.id }).decision.answer;
+  assert.deepEqual([agentServed.delegation.performed_by, agentServed.delegation.instructed_by, agentServed.basis], ['agent:driver', 'owner', 'recorded']);
+  assert.deepEqual([agentServed.option, agentServed.actor, typeof agentServed.at], ['approve', 'human', 'string']);
+  const agentEntry = receipt.owner_answers.find((a) => a.decision === b.decision.id);
+  assert.deepEqual([agentEntry.delegation, agentEntry.basis], [agentServed.delegation, agentServed.basis], 'the decision read and the receipt agree');
+  // The key removed from the answer alone (its approval row still holding a delegation): both reads go by the stored answer, and agree.
+  db.prepare('UPDATE decisions SET answer = json_remove(answer, \'$.delegation\') WHERE id = ?').run(b.decision.id);
+  const removed = readDecision(db, { project: p.id, decision: b.decision.id }).decision.answer;
+  assert.deepEqual([removed.delegation, removed.basis], [null, 'not_recorded']);
+  const again = iterationReceipt(db, { project: p.id, iteration: p.iteration }).owner_answers.find((a) => a.decision === b.decision.id);
+  assert.deepEqual([again.delegation, again.basis], [null, 'not_recorded'], 'never inferred from another record');
+});
+
 // ---- DECISIONS item 57, D8: the opt-in preparation allowance ----
 
 const { createIteration, limitsOf } = await import(join(dist, 'store', 'transitions', 'prototype.js'));
