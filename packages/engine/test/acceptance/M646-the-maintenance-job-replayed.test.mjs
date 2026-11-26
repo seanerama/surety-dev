@@ -263,15 +263,36 @@ describe('M646 the maintenance job replayed', () => {
     assert.ok(relayOk, `Open preview: one request to local's relay (→ ${R.relay.status} ${show(R.relay.body).slice(0, 400)})`);
   });
 
-  test('agent dispatches of iteration 2 by role and kind: Spec Writer 1, Architect 1, Verifier authoring 1, Builder 2, Verifier verification 2, Verifier check correction 1, Builder fix 1', (t) => {
-    const runs = runsOfIteration(R.fx.home, R.it2);
+  // Dispatches are reported as recorded (the amended row M646): the judging
+  // target's nine, and on its own line any stage re-dispatched because a
+  // tightening applied after its integration failed its stage gate
+  // (DECISIONS item 57 exception E1, Sean's ruling pending: target 0,
+  // reported, not asserted). What is asserted: every recorded dispatch is
+  // one of the two, and the rest are exactly the target.
+  test('agent dispatches of iteration 2 by role and kind, as recorded: the target\'s nine (Spec Writer 1, Architect 1, Verifier authoring 1, Builder 2, Verifier verification 2, Verifier check correction 1, Builder fix 1) and, on their own line, stage repairs after a tightening (E1: reported)', (t) => {
+    const { fx } = R;
+    const runs = runsOfIteration(fx.home, R.it2);
     const by = {};
     for (const r of runs) by[`${r.role}/${r.work_kind}`] = (by[`${r.role}/${r.work_kind}`] ?? 0) + 1;
-    t.diagnostic(`dispatches: ${show(by)} (${runs.length} runs)`);
-    const items = runs.map((r) => one(R.fx.home, 'SELECT "id", "kind", "trigger_source", "trigger_id", "trigger_generation", "subject" FROM "work_items" WHERE "id" = ?', r.work_item));
+    const items = runs.map((r) => one(fx.home, 'SELECT "id", "kind", "trigger_source", "trigger_id", "trigger_generation", "subject" FROM "work_items" WHERE "id" = ?', r.work_item));
+    t.diagnostic(`dispatches as recorded: ${show(by)} (${runs.length} runs)`);
     t.diagnostic(`runs: ${show(runs.map((r, i) => [r.role, r.work_kind, r.outcome ?? r.state, items[i]?.trigger_source, items[i]?.trigger_generation, J(items[i]?.subject)]))}`);
-    assert.deepEqual(by, TARGET_DISPATCHES, `iteration 2's runs by role/kind (${show(by)})`);
-    assert.equal(runs.length, 9, '9 dispatches in all');
+    // A stage repair after a tightening: a later run of a stage_build item
+    // whose earlier run had ended before a protected version took effect, and
+    // that version took effect before this run was created.
+    const versions = versionsOf(fx.home, R.p).filter((v) => v.effective_from !== null);
+    const e1 = runs.filter((r, i) => {
+      if (r.work_kind !== 'stage_build') return false;
+      const earlier = runs.filter((x) => x.work_item === r.work_item && x.seq < r.seq);
+      if (earlier.length === 0) return false;
+      const ended = earlier.at(-1).finished_at ?? earlier.at(-1).created_at;
+      return versions.some((v) => v.effective_from > ended && v.effective_from < r.created_at) && items[i]?.kind === 'stage_build';
+    });
+    t.diagnostic(`stage repairs after a tightening (E1, target 0, reported): ${e1.length} ${show(e1.map((r) => ({ run: r.id, work_item: r.work_item, subject: J(items[runs.indexOf(r)]?.subject) })))}`);
+    const rest = {};
+    for (const r of runs.filter((x) => !e1.includes(x))) rest[`${r.role}/${r.work_kind}`] = (rest[`${r.role}/${r.work_kind}`] ?? 0) + 1;
+    assert.deepEqual(rest, TARGET_DISPATCHES, `iteration 2's runs other than the E1 line are the target's (${show(rest)}; as recorded ${show(by)}; E1 ${e1.length})`);
+    assert.equal(runs.length, 9 + e1.length, `every recorded dispatch is the target's or named on the E1 line (${runs.length} = 9 + ${e1.length})`);
   });
 
   test('the obsolete gap authoring the redeploy queued: 0 runs, 0 findings, 0 decisions', (t) => {
@@ -286,15 +307,21 @@ describe('M646 the maintenance job replayed', () => {
     assert.deepEqual([runs.length, findings.length, decisions.length], [0, 0, 0], `0 runs, 0 findings, 0 decisions from ${gaps[0].id} (${show({ runs, findings, decisions })})`);
   });
 
-  test('candidate review detects the print defect on candidate 2; the correction\'s accept-r5-5-print reproduces it (real exit 1); a repair authorized by the brief corrects it; candidate 3 passes accept-r5-5-print (real exit 0); the real accept-r5-5 passed candidate 2 (non-regression only)', (t) => {
+  test('candidate review detects the print defect on candidate 2; the correction\'s accept-r5-5-print reproduces it (real exit 1) and becomes its check; a repair authorized by the brief corrects it; candidate 3 passes accept-r5-5-print (real exit 0); the real accept-r5-5 passed candidate 2 (non-regression only)', (t) => {
     const { fx, p, real } = R;
     const its = candidatesOf(fx.home, p).filter((c) => c.seq > R.c1.seq);
     t.diagnostic(`iteration 2's candidates: ${show(its.map((c) => [c.id, c.revision?.slice(0, 10), c.superseded_by ?? null]))}`);
     t.diagnostic(`real runs: ${show(real.map((r) => [r.key, r.candidate, r.revision.slice(0, 10), `v${r.version_seq}`, r.exit]))}`);
-    const findings = findingsOf(fx.home, p).filter((f) => f.criterion === 'R5.5' && f.check === 'accept-r5-5');
-    t.diagnostic(`the print finding: ${show(findings.map((f) => ({ id: f.id, scope: f.scope, status: f.status, disposition: f.disposition, authority: f.disposition_authority, by: f.disposition_by, resolution: J(f.resolution_verification) })))}`);
+    const findings = findingsOf(fx.home, p).filter((f) => f.criterion === 'R5.5' && f.message === PRINT_FINDING.message);
+    t.diagnostic(`the print finding: ${show(findings)}`);
     assert.equal(findings.length, 1, `one print finding (${show(findings)})`);
     const F = findings[0];
+    // Objection 236 option 1 (the amended M637 (b), M646): the correction's
+    // failing check covering R5.5 reproduces the finding and becomes its
+    // check; accept-r5-5, the check the Verifier named, kept in its history.
+    assert.equal(F.check, PRINT_CHECK, `the finding's check is bound to the correction's accept-r5-5-print (check ${F.check})`);
+    const elsewhere = Object.entries(F).filter(([k, v]) => k !== 'check' && k !== 'message' && typeof v === 'string' && (v === 'accept-r5-5' || v.includes('"accept-r5-5"')));
+    assert.ok(elsewhere.length > 0, `accept-r5-5, the named check, kept in the finding's history (${show(F)})`);
     const c2 = F.candidate;
     assert.equal(F.scope, 'candidate', `bound to the candidate it observed (D6) (scope ${F.scope})`);
     assert.equal(F.message, PRINT_FINDING.message, 'the production finding');
@@ -309,13 +336,14 @@ describe('M646 the maintenance job replayed', () => {
     const c3 = its.at(-1);
     assert.notEqual(c3.id, c2, 'the fix nominated a later candidate');
     assert.ok(real.some((r) => r.candidate === c3.id && r.key === PRINT_CHECK && r.exit === 0), `accept-r5-5-print passed on candidate 3 (${show(real.filter((r) => r.candidate === c3.id).map((r) => [r.key, r.exit]))})`);
+    assert.ok(real.some((r) => r.candidate === c3.id && r.key === 'accept-r5-5' && r.exit === 0), 'the real accept-r5-5 passed on candidate 3 too (non-regression)');
     // The resolution names the result that verified it (gates.ts: {evaluation, check_result}),
     // a passing result on candidate 3 of an execution this test ran for real.
     const verified = J(F.resolution_verification);
     const cr = verified?.check_result ? one(fx.home, 'SELECT "candidate", "exit_status", "execution" FROM "check_results" WHERE "id" = ?', verified.check_result) : null;
     const ran = cr ? real.find((r) => r.execution === cr.execution) : null;
     t.diagnostic(`the resolution's result: ${show({ verified, cr, ran: ran && { key: ran.key, exit: ran.exit } })}`);
-    assert.ok(cr && cr.candidate === c3.id && cr.exit_status === 0 && ran, `the resolution names a pass on candidate 3 that this test ran for real (${show({ verified, cr, ran: ran && { key: ran.key, exit: ran.exit } })})`);
+    assert.ok(cr && cr.candidate === c3.id && cr.exit_status === 0 && ran?.key === PRINT_CHECK, `the resolution names accept-r5-5-print's pass on candidate 3, run for real (${show({ verified, cr, ran: ran && { key: ran.key, exit: ran.exit } })})`);
   });
 
   test('the plan and the tightenings were the brief\'s: no preparation, architecture, plan, tightening or disposition question in iteration 2; phase 2\'s checks and the R5.5 correction applied by policy', (t) => {
