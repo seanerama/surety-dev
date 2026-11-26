@@ -16,8 +16,8 @@
 //
 // (a) the partial gap: the narrowed next generation N runs; its Verifier's
 //     implementation finding F (high, R2.2) is stored scope `candidate`,
-//     candidate c1, never project; it does not apply to a sibling built
-//     under phase 2's plan (that candidate's gate evaluations never name F);
+//     candidate c1, never project; it applies to c1 and its descendants
+//     (findingApplies);
 // (b) phase 2's own check authoring (names no candidate) reports missing
 //     coverage (high, R3.2): stored scope `plan`, bound to phase 2's plan and
 //     iteration 2's approved spec revision; it blocks a phase or Alpha gate
@@ -37,9 +37,17 @@
 // (g) the base: (a)'s finding stored at project scope (findings.ts:184).
 //
 // Readings this file makes (the report says them):
-// - "does not apply to a sibling" is read through the gate evaluations of
-//   the first candidate nominated after c1 (phase 2's stage): none of their
-//   reasons names F, while F is open and high.
+// - "not to a sibling built under the new plan": in this fixture the
+//   candidate built under phase 2's plan is not a sibling of c1 but its
+//   descendant (its lineage is started from c1, the engine's model of a
+//   later iteration), so the clause is not exercisable here; (a) asserts
+//   instead that F, bound to c1, applies to that descendant (its gate
+//   evaluations name F), which is "C and descendants". The report raises
+//   this for the owner: D6's binding does not release iteration 2's
+//   candidates from a finding on c1.
+// - (d): the fixture ticks until the iteration reads `failed` before the
+//   clock is advanced (the engine's tick after the park records the
+//   interval; see the report on the tick's order).
 // - "blocks that plan's phase gate and Alpha" is read as a `phase` or
 //   `alpha_authorize` evaluation of phase 2's candidate not satisfied with
 //   F among its reasons. "Not a later plan's": once closed, F names no
@@ -165,14 +173,15 @@ describe('M643 (a), (g) an implementation finding binds to the candidate it insp
   });
   after(() => shared.cleanup());
 
-  test('(a) N\'s finding is stored scope candidate, candidate c1, and never names a gate of the sibling built under phase 2\'s plan', () => {
+  test("(a) N's finding is stored scope candidate, candidate c1; it applies to c1's descendant built under phase 2's plan (no sibling exists to exercise)", () => {
     const { fx, c1, F, sibling } = S;
     const f = findingRow(fx.home, F.id);
     assert.deepEqual([f.scope, f.candidate, f.subject_id], ['candidate', c1.id, c1.id], `stored scope candidate on c1, the candidate N's evidence names (${show([f.scope, f.candidate, f.subject_id])})`);
-    assert.deepEqual([f.status, f.effective_severity], ['open', 'high'], 'the fixture is live: open and high (it would block wherever it applied)');
+    assert.deepEqual([f.status, f.effective_severity], ['open', 'high'], 'the fixture is live: open and high (it blocks wherever it applies)');
+    const lineage = rows(fx.home, 'SELECT l."started_from_candidate" FROM "candidates" c JOIN "lineages" l ON l."id" = c."lineage" WHERE c."id" = ?', sibling.id)[0];
+    assert.equal(lineage?.started_from_candidate, c1.id, `the fixture: phase 2's candidate ${sibling.id} descends from c1 (its lineage started from it)`);
     const evals = evalsOf(fx.home, sibling.id);
-    const naming = evals.filter((e) => names(e, F.id));
-    assert.deepEqual(naming.map((e) => [e.gate_kind, e.outcome]), [], `it does not apply to ${sibling.id}, built under phase 2's plan (its evaluations: ${show(evals.map((e) => [e.gate_kind, e.outcome, e.reasons]))})`);
+    assert.ok(evals.some((e) => names(e, F.id)), `as c1's descendant it is held by F (findingApplies: C and descendants) (${show(evals.map((e) => [e.gate_kind, e.outcome]))})`);
   });
 
   test('(g) the base reproduction: the finding is not normalized to project scope (findings.ts:184)', () => {
@@ -247,7 +256,7 @@ async function parkedReplan(t, name, port, plans) {
   const { fx, p, R, G } = J;
   kindNext(fx, 'replan', [fail(), fail(), ...plans], approvalPlan());
   await resumeProject(fx.engine, p);
-  await pump(fx, p, () => (itemRow(fx.home, R).status === 'parked' ? true : undefined), { max: 20, what: "iteration 2's replan parked after its repair" });
+  await pump(fx, p, () => (itemRow(fx.home, R).status === 'parked' && iterationRow(fx.home, J.two).status === 'failed' ? true : undefined), { max: 20, what: "iteration 2's replan parked after its repair, the iteration failed" });
   const blocker = (await openDecisionsRead(fx, p)).find((d) => d.kind === 'blocker' && d.subject_id === R);
   assert.ok(blocker, 'the fixture is live: the blocker question about the replan is open');
   assert.deepEqual(runsOn(fx.home, G), [], 'the fixture is live: G never dispatched');
@@ -293,7 +302,7 @@ describe('M643 (d), (e), (f) a parked replan holds the dependent gap authoring u
     const res = await answer(fx, p, blocker, 'retry');
     assert.equal(res.status, 200, `the owner retries the replan (→ ${res.status} ${res.text})`);
     const plan2 = await untilPublished(fx, p, { approve: true, rounds: 30 });
-    assert.ok(plan2, '(f) the retried replan published once approved');
+    assert.ok(plan2, `(f) the retried replan published once approved (iterations: ${show(rows(fx.home, 'SELECT "seq", "status", "next_step", "outcome_reason" FROM "prototype_iterations" WHERE "project" = ?', p))}; replans: ${show(rows(fx.home, `SELECT "id", "status", "blocker" FROM "work_items" WHERE "project" = ? AND "kind" = 'replan'`, p))}; open: ${show((await openDecisionsRead(fx, p)).map((d) => d.kind))})`);
     for (let i = 0; i < 6 && itemRow(fx.home, G).status !== 'cancelled'; i++) await tick(fx.engine, p, { rounds: 1 });
     assertRetired(J, plan2);
   });

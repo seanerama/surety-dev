@@ -264,3 +264,15 @@ export async function narrowGapRefused(t, { name, port, partial = false, approva
   fx.scripted.script(G.id, [gapScript(criteria), gapScript(criteria)]);
   return { fx, p, it, two, env, c1, plan1, R, G: G.id, criteria };
 }
+
+// The question's reasons why the policy did not act: from the decision as
+// served (GET …/decisions/:d) and as recorded (`decisions.evidence`, where
+// raiseQuestion keeps the evidence a question is raised with). Returns
+// {reasons, served, stored}: `served` the reasons the read carries.
+export async function decisionWhy(fx, project, id) {
+  const res = await fx.engine.get(`/v1/projects/${project}/decisions/${id}`);
+  const served = res.body?.decision ?? null;
+  const stored = J(one(fx.home, 'SELECT "evidence" FROM "decisions" WHERE "id" = ?', id)?.evidence ?? null);
+  const fromServed = served ? whyNotPolicy(served) : [];
+  return { reasons: [...fromServed, ...whyNotPolicy({ stored })], served: fromServed, stored, decision: served };
+}

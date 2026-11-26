@@ -50,8 +50,9 @@
 //   `nominated_protected_version` the new version and a `verification` work
 //   item about it.
 // - "its evidence naming why" is read as a sentence of the served decision
-//   (GET …/decisions/:d) giving a reason under a `policy_…` key, or a
-//   sentence naming the policy and why (harness/item57v2.mjs whyNotPolicy).
+//   giving a reason under a `policy_…` key (or a sentence naming the policy
+//   and why), as recorded (decisions.evidence) or as served by GET
+//   …/decisions/:d (harness/item57v2.mjs decisionWhy).
 // - (e) has a third proposal: an existing check whose declared input file
 //   (a scenario under .surety/checks/run/) is edited, which the classifier
 //   calls `input_changed`, unclassifiable: the owner's question.
@@ -84,7 +85,6 @@ import {
   authoringScript,
   briefToAlpha,
   candidatesOfProject,
-  decisionRead,
   idle,
   iterationRead,
   iterationRow,
@@ -103,7 +103,7 @@ import {
   workOfProject,
   write,
 } from './harness/prototype.mjs';
-import { NARROW_FILES, decisionsAbout, eventsAbout, narrowGapRefused, narrowInputs, objectsWhere, proposalRow, proposalsOfRun, rows, show, versionsOfProposal, whyNotPolicy, workOfKind } from './harness/item57v2.mjs';
+import { NARROW_FILES, decisionsAbout, eventsAbout, narrowGapRefused, narrowInputs, objectsWhere, proposalRow, proposalsOfRun, rows, show, versionsOfProposal, decisionWhy, workOfKind } from './harness/item57v2.mjs';
 
 const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
 const FILES = NARROW_FILES;
@@ -164,6 +164,22 @@ const reviewsOf = (fx, p, proposal) => rows(fx.home, `SELECT "id" FROM "work_ite
 
 // Pumped (no owner answer) until `done(P)` holds for phase 2's proposal.
 async function untilProposal(fx, p, done, what, itemOf = () => phase2Authoring(fx, p)) {
+  const state = () => {
+    const item = itemOf();
+    const runs = item ? runsOn(fx.home, item) : [];
+    const props = runs.flatMap((r) => proposalsOfRun(fx.home, r.id)).map((x) => [x.id, x.status, x.classified_change_kind, x.approver_authority, decisionsAbout(fx.home, x.id).map((d) => [d.kind, d.status])]);
+    return show({ item, item_status: item ? rows(fx.home, 'SELECT "status", "end_cause" FROM "work_items" WHERE "id" = ?', item)[0] : null, runs: runs.map((r) => [r.id, r.state, r.outcome]), proposals: props });
+  };
+  return pumpOr(fx, p, done, what, itemOf, state);
+}
+async function pumpOr(fx, p, done, what, itemOf, state) {
+  try {
+    return await pumpInner(fx, p, done, what, itemOf);
+  } catch (e) {
+    throw new Error(`${e.message}\n(the item and its proposals: ${state()})`);
+  }
+}
+async function pumpInner(fx, p, done, what, itemOf) {
   return pump(
     fx,
     p,
@@ -222,8 +238,9 @@ async function assertAsked(J, P, kind, what) {
   const open = decisionsAbout(fx.home, P.id, kind).filter((d) => d.status === 'open');
   assert.equal(open.length, 1, `${what}: the owner's ${kind} question (${show(decisionsAbout(fx.home, P.id).map((d) => [d.kind, d.status]))})`);
   assert.deepEqual(reviewsOf(fx, p, P.id), [], `${what}: no Reviewer (recommend)`);
-  const d = await decisionRead(fx, p, open[0].id);
-  assert.ok(whyNotPolicy(d).length > 0, `${what}: its evidence names why the policy did not cover it (served: ${show(d).slice(0, 2500)})`);
+  const why = await decisionWhy(fx, p, open[0].id);
+  assert.ok(why.reasons.length > 0, `${what}: its evidence names why the policy did not cover it (stored: ${show(why.stored)}; served: ${show(why.decision).slice(0, 1500)})`);
+  return why;
 }
 
 // Ticked one round at a time until phase 2's proposal is first seen; returns it if still captured with no class, else null.

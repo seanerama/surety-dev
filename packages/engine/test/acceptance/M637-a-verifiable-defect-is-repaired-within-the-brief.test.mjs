@@ -60,13 +60,14 @@
 //   `check_result` is that result.
 // - "the iteration's delegation record" is read as an entry of the
 //   iteration read naming F (anywhere in it) that carries `performed_by`
-//   or kind `fix_registered`; "readable" as that entry naming F and the fix
-//   work item, and the finding's resolution naming the result on the
-//   resulting candidate.
-// - "its evidence saying …" is read as harness/item57v2.mjs whyNotPolicy on
-//   the served question (a reason under a `policy_…` key, or a sentence
-//   naming the policy), and for (d) such a reason naming the allowance
-//   (/allowance|repairs_per_iteration/).
+//   or kind `fix_registered`; "readable" as: that entry naming F, the fix
+//   work item served by the work read naming F, and the finding's
+//   resolution naming the result on the resulting candidate.
+// - "its evidence saying …" is read as a reason under a `policy_…` key (or
+//   a sentence naming the policy) in the question's evidence as recorded
+//   (decisions.evidence) or as served (harness/item57v2.mjs decisionWhy);
+//   for (d) such a reason naming the allowance. Whether the decision read
+//   serves it is reported as a diagnostic.
 // - (b)'s correction edits X itself (the same key, a criterion added, its
 //   inputs unchanged: the classifier's `criteria_added`, a tightening), not
 //   an input file of X (which the classifier calls `input_changed`,
@@ -90,7 +91,7 @@ import { describe, test } from 'node:test';
 import { gapItems, gapScript, phase2Plan, restart, runsOn, untilPublished } from './harness/gap57.mjs';
 import { waitFor } from './harness/engine.mjs';
 import { pauseProject, resumeProject, tick } from './harness/runs.mjs';
-import { CHECK_KINDS, alphaReady, answerOpen, authoringScript, decisionRead, iterationRead, kindNext, protoEngine, pump, result, toBrief, usage, write } from './harness/prototype.mjs';
+import { CHECK_KINDS, alphaReady, answerOpen, authoringScript, iterationRead, kindNext, protoEngine, pump, result, toBrief, usage, workRead, write } from './harness/prototype.mjs';
 import {
   NARROW_FILES,
   decisionsAbout,
@@ -104,7 +105,7 @@ import {
   rows,
   show,
   versionsOfProposal,
-  whyNotPolicy,
+  decisionWhy,
   workOfKind,
 } from './harness/item57v2.mjs';
 
@@ -201,7 +202,9 @@ async function assertRepairedByPolicy(J, what, { tightenedVersion = null } = {})
   // The delegation record.
   const entries = objectsWhere(read, (o) => show(o).includes(F) && ('performed_by' in o || o.kind === 'fix_registered'));
   assert.ok(entries.length > 0, `${what}: the iteration's delegation record names F (iteration read keys: ${Object.keys(read).join(', ')})`);
-  assert.ok(entries.some((e) => show(e).includes(fixes[0].id) || fixRuns.some((r) => show(e).includes(r.id))), `${what}: and the fix (${show(entries)})`);
+  const served = (await workRead(fx, p)).find((w) => w.id === fixes[0].id);
+  assert.equal(served?.subject?.finding, F, `${what}: the fix work read from the finding (the work read serves it naming F: ${show(served?.subject)})`);
+  assert.ok(candidate(fx.home, passed.find((r) => r.id === resolved.resolution_verification.check_result).candidate)?.id === next.id, `${what}: the resolution names the result on the resulting candidate`);
   return { resolved, next, fix: fixes[0] };
 }
 
@@ -242,8 +245,9 @@ describe('M637 a verifiable defect within the brief is repaired on the brief\'s 
     assert.ok(resultsOf(fx.home, S.C, X).some((r) => r.exit_status === 0 && r.protected_version === applied.id), '(c) the fixture is live: the tightened X passed on C');
     assert.deepEqual(fixItems(fx.home, p, S.F), [], '(c) no fix registered');
     assert.equal(findingRow(fx.home, S.F).disposition, null, '(c) F undispositioned');
-    const d = await decisionRead(fx, p, q.id);
-    assert.ok(whyNotPolicy(d).length > 0, `(c) its evidence says why the policy did not repair it (${show(d).slice(0, 2500)})`);
+    const why = await decisionWhy(fx, p, q.id);
+    assert.ok(why.reasons.length > 0, `(c) its evidence says why the policy did not repair it (stored: ${show(why.stored)}; served: ${show(why.decision).slice(0, 1500)})`);
+    t.diagnostic(`(c) reasons: ${show(why.reasons)}; served by the decision read: ${why.served.length > 0}`);
     assertNeverByPolicy(fx, S.F, '(c)');
   });
 
@@ -252,9 +256,10 @@ describe('M637 a verifiable defect within the brief is repaired on the brief\'s 
     const { fx, p, S, exitOf } = J;
     const q = await pumpWith(fx, p, () => asked(fx.home, S.F).find((d) => d.status === 'open'), { exitOf, log: S.exitLog, max: 40, what: "(d) the owner's question about F" });
     assert.deepEqual(fixItems(fx.home, p, S.F), [], '(d) no fix registered');
-    const d = await decisionRead(fx, p, q.id);
-    assert.ok(whyNotPolicy(d).length > 0, `(d) its evidence says why the policy did not repair it (${show(d).slice(0, 2500)})`);
-    assert.ok(whyNotPolicy(d).some((s) => /allowance|repairs_per_iteration/.test(s)), `(d) naming the allowance (${show(whyNotPolicy(d))})`);
+    const why = await decisionWhy(fx, p, q.id);
+    assert.ok(why.reasons.length > 0, `(d) its evidence says why the policy did not repair it (stored: ${show(why.stored)}; served: ${show(why.decision).slice(0, 1500)})`);
+    assert.ok(why.reasons.some((s) => /allowance|repairs_per_iteration/.test(s)), `(d) naming the allowance (${show(why.reasons)})`);
+    t.diagnostic(`(d) reasons: ${show(why.reasons)}; served by the decision read: ${why.served.length > 0}`);
     assertNeverByPolicy(fx, S.F, '(d)');
   });
 
@@ -279,8 +284,9 @@ describe('M637 a verifiable defect within the brief is repaired on the brief\'s 
     const F = await pump(fx, p, () => rows(fx.home, 'SELECT * FROM "findings" WHERE "project" = ? AND "criterion" = ? AND "source_run" IN (SELECT "id" FROM "runs" WHERE "work_item" = ?)', p, 'R2.2', N.id)[0], { answer: CHECK_KINDS, max: 40, what: "N's Verifier's finding on c1" });
     const q = await pump(fx, p, () => asked(fx.home, F.id).find((d) => d.status === 'open'), { answer: CHECK_KINDS, max: 20, what: "(e) the owner's question about it" });
     assert.deepEqual(fixItems(fx.home, p, F.id), [], '(e) no fix registered by the policy');
-    const d = await decisionRead(fx, p, q.id);
-    assert.ok(whyNotPolicy(d).length > 0, `(e) its evidence says why the policy did not repair it (${show(d).slice(0, 2500)})`);
+    const why = await decisionWhy(fx, p, q.id);
+    assert.ok(why.reasons.length > 0, `(e) its evidence says why the policy did not repair it (stored: ${show(why.stored)}; served: ${show(why.decision).slice(0, 1500)})`);
+    t.diagnostic(`(e) reasons: ${show(why.reasons)}; served by the decision read: ${why.served.length > 0}`);
     assertNeverByPolicy(fx, F.id, '(e)');
   });
 
