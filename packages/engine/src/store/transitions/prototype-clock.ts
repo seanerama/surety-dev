@@ -38,6 +38,7 @@ type Db = Tx['db'];
 
 export type ClockExclusionReason = 'parked_on_blocker' | 'paused' | 'engine_stall' | 'provider_refusal';
 export type ClockBasis = 'recorded' | 'not_recorded_before_0053';
+const BASIS_TOLERANCE_MS = 5000;
 
 export interface ClockIteration {
   id: string;
@@ -72,7 +73,13 @@ export function clockBasisOf(db: Db, it: Pick<ClockIteration, 'id'> & { created_
   if (row.clock_basis === 'recorded') return 'recorded';
   const applied = (db.prepare('SELECT "applied_at" FROM "schema_migrations" WHERE "seq" = 53').get() as { applied_at: string } | undefined)?.applied_at;
   if (applied === undefined) return 'not_recorded_before_0053';
-  return Date.parse(row.created_at) >= Date.parse(applied) ? 'recorded' : 'not_recorded_before_0053';
+  // Within a few seconds of the migration counts as after it: the two stamps
+  // come from the wall clock, which a host's time correction can step back
+  // (observed once in the unit suite on the workstation). An iteration
+  // created that close before the migration cannot have had an interval to
+  // record. clock_basis written at creation (createIteration, Builder A's)
+  // makes this moot.
+  return Date.parse(row.created_at) >= Date.parse(applied) - BASIS_TOLERANCE_MS ? 'recorded' : 'not_recorded_before_0053';
 }
 
 // ---- recording -----------------------------------------------------------------------------
