@@ -143,6 +143,10 @@ test('E1: the tightened check fails on the integrated stage while a covering def
   const f = db.prepare(`SELECT * FROM findings WHERE id = 'fnd_1'`).get();
   assert.deepEqual([f.disposition, f.disposition_authority, f.check], ['fix', 'policy', 'acc2'], 'fixed by policy, bound to the check that reproduced it');
   assert.equal(fixes(db).length, 1, 'one fix item');
+  // The registration in the result's transaction writes its act, once, with the iteration the fix belongs to.
+  const acts = db.prepare(`SELECT iteration, subject_id FROM delegated_actions WHERE kind = 'fix_registered'`).all();
+  assert.deepEqual(acts, [{ iteration: 'it_1', subject_id: 'fnd_1' }]);
+  assert.equal(P.iterationAccount(db, 'prj_1', 'it_1').repairs_used, 1, 'one unit, counted from that act');
   // Reconciled again (a later result, a tick): still held by the fix.
   post(db, 'chk_smoke', 'cand_1', 0);
   assert.deepEqual(stage(db), { status: 'verifying', repair_attempts: 0 });
@@ -205,4 +209,23 @@ test('E1, the losing order: a run under way reserves what the iteration has left
   assert.equal(transact(db, ENGINE_ACTOR, (tx) => askUndispositioned(tx, { project: 'prj_1' })), 0);
   assert.equal(fixes(db).length, 1);
   assert.equal(P.iterationAccount(db, 'prj_1', 'it_1').repairs_used, 1, 'one unit');
+  assert.deepEqual(db.prepare(`SELECT iteration, subject_id FROM delegated_actions WHERE kind = 'fix_registered'`).all(), [{ iteration: 'it_1', subject_id: 'fnd_1' }], 'one act, the iteration the fix belongs to');
+});
+
+test('the sweep path: the finding raised after its reproducing result, the fix registered by askUndispositioned writes the same one act; a reconcile after it writes none', (t) => {
+  const db = store(t);
+  post(db, 'chk_acc', 'cand_1', 0);
+  post(db, 'chk_smoke', 'cand_1', 0);
+  // The stage is not verifying when the result lands (no reconcile acts on it).
+  db.prepare(`UPDATE work_items SET status = 'integrated' WHERE id = 'wi_1'`).run();
+  post(db, 'chk_acc2', 'cand_1', 1);
+  finding(db);
+  assert.equal(transact(db, ENGINE_ACTOR, (tx) => askUndispositioned(tx, { project: 'prj_1' })), 0, 'no question');
+  assert.deepEqual(db.prepare(`SELECT iteration, subject_id FROM delegated_actions WHERE kind = 'fix_registered'`).all(), [{ iteration: 'it_1', subject_id: 'fnd_1' }]);
+  db.prepare(`UPDATE work_items SET status = 'verifying' WHERE id = 'wi_1'`).run();
+  post(db, 'chk_smoke', 'cand_1', 0);
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM delegated_actions WHERE kind = 'fix_registered'`).get().n, 1, 'once');
+  assert.equal(fixes(db).length, 1);
+  assert.deepEqual(stage(db), { status: 'verifying', repair_attempts: 0 }, 'held by the fix');
+  assert.equal(P.iterationAccount(db, 'prj_1', 'it_1').repairs_used, 1);
 });
