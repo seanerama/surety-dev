@@ -529,8 +529,13 @@ function withPlanHold<T extends { reason: string }>(db: Db, project: string, now
   for (const w of items) {
     const hold = heldByPlan(db, w);
     if (hold === null) continue;
-    const on = hold.replan !== null ? `replan ${hold.replan}, which is ${hold.status}` : `bundle ${hold.bundle}, which awaits its approval`;
-    const sentence = ` Work item ${w.id} (check_authoring) waits on the plan under way: ${on}${hold.decision !== null ? `; decision ${hold.decision} resolves it` : ''}. It is not dispatched until the plan is approved, replaced or abandoned.`;
+    // The sentence is said where the owner can act on the plan (the replan
+    // parked behind its blocker, or the bundle awaiting approval), naming
+    // the plan, not the held item (M642 (e): NOW's reason names only what
+    // the owner's act releases); `held_by` names the item.
+    const owner = hold.status === 'parked' || hold.status === 'awaiting_approval';
+    const on = hold.replan !== null ? `replan ${hold.replan} is ${hold.status}` : `bundle ${hold.bundle} awaits its approval`;
+    const sentence = owner ? ` A check authoring for the deployment's gap waits on the plan under way: ${on}${hold.decision !== null ? `; decision ${hold.decision} resolves it` : ''}. It is not dispatched until the plan is approved, replaced or abandoned.` : '';
     return { ...now, reason: `${now.reason}${sentence}`, held_by: { work_item: w.id, ...hold } };
   }
   return now;
