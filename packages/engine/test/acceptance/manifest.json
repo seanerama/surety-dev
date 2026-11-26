@@ -584,7 +584,18 @@
       "M613-static-mode-on-a-real-unit.test.mjs",
       "M625-a-python-service-on-a-real-unit.test.mjs",
       "M641-an-obsolete-gap-authoring-is-retired-with-a-recorded-reason.test.mjs",
-      "M642-the-reads-name-a-held-phase-and-an-authorings-criteria.test.mjs"
+      "M642-the-reads-name-a-held-phase-and-an-authorings-criteria.test.mjs",
+      "M635-a-plan-within-the-brief-is-published-on-its-basis.test.mjs",
+      "M636-the-brief-authorizes-its-own-check-tightenings.test.mjs",
+      "M637-a-verifiable-defect-is-repaired-within-the-brief.test.mjs",
+      "M638-deployment-is-bound-to-the-briefs-target.test.mjs",
+      "M639-the-runtime-clock-excludes-blocked-and-paused-time.test.mjs",
+      "M640-the-brief-the-receipt-and-the-delegation-record.test.mjs",
+      "M643-a-finding-binds-to-what-it-observed.test.mjs",
+      "M644-the-preparation-allowance.test.mjs",
+      "M645-restoring-an-earlier-alpha.test.mjs",
+      "M646-the-maintenance-job-replayed.test.mjs",
+      "M646-the-print-repair-on-the-real-check-runner.test.mjs"
     ]
   },
   "sandbox": [
@@ -708,7 +719,8 @@
     "M560-qualification-admission-and-not-dispatched.test.mjs",
     "M611-a-disposable-local-service-alpha.test.mjs",
     "M613-static-mode-on-a-real-unit.test.mjs",
-    "M625-a-python-service-on-a-real-unit.test.mjs"
+    "M625-a-python-service-on-a-real-unit.test.mjs",
+    "M646-the-print-repair-on-the-real-check-runner.test.mjs"
   ],
   "exhaust": [
     "M133-resource-limits.test.mjs",

@@ -89,6 +89,17 @@ const ROWS = [
   'M634',
   'M641',
   'M642',
+  // §3j, one approval of an ordinary maintenance brief (DECISIONS item 57, Sean's rulings D1–D8 and Q1)
+  'M635',
+  'M636',
+  'M637',
+  'M638',
+  'M639',
+  'M640',
+  'M643',
+  'M644',
+  'M645',
+  'M646',
 ];
 const TEST_TIMEOUT_MS = Number(process.env.SURETY_TEST_TIMEOUT_MS ?? 600_000);
 
