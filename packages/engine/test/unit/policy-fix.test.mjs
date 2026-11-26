@@ -225,3 +225,26 @@ test("the owner reads why the policy declined: GET …/decisions/:d serves the s
   assert.match(JSON.parse(next.evidence).policy_fix_refused, /repair_allowance_exhausted/, 'the reason carried');
   assert.match(readDecision(s.db, { project: 'prj_1', decision: next.id }).decision.evidence.policy_fix_refused, /repair_allowance_exhausted/);
 });
+
+test('a covering check whose registration was cancelled and never ran is not waited on (no silent stall): the owner is asked, no result named', (t) => {
+  const s = store(t, { result: false });
+  s.run(
+    `INSERT INTO check_executions (id, created_at, project, "check", key, candidate, source_revision, protected_version, runner_class, execution_seq, "trigger", trigger_key, status, registered_at)
+     VALUES ('x_1', ?, 'prj_1', 'chk_x', 'x', 'cand_1', ?, 'pv_1', 'direct', 1, '{}', 'k', 'cancelled', ?)`,
+    AT,
+    REV,
+    AT,
+  );
+  assert.equal(sweep(s.db), 1, 'asked, not waiting');
+  assert.match(JSON.parse(owed(s.db)[0].evidence).policy_fix_refused, /repair_unverifiable: no result of a check covering R1.1/);
+  // The same registration still queued: the policy waits for its result.
+  const q = store(t, { result: false });
+  q.run(
+    `INSERT INTO check_executions (id, created_at, project, "check", key, candidate, source_revision, protected_version, runner_class, execution_seq, "trigger", trigger_key, status, registered_at)
+     VALUES ('x_1', ?, 'prj_1', 'chk_x', 'x', 'cand_1', ?, 'pv_1', 'direct', 1, '{}', 'k', 'queued', ?)`,
+    AT,
+    REV,
+    AT,
+  );
+  assert.equal(sweep(q.db), 0, 'waiting on a result to come');
+});

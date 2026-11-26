@@ -52,6 +52,7 @@ import { alphaNotOwn, iterationAccount, iterationVerdict } from './prototype.js'
 import { projectPolicy } from './settings.js';
 import { recordDisposition } from './queue.js';
 import type { Tx } from './tx.js';
+import { IN_FLIGHT } from '../../plan/bundle.js';
 
 type Db = Tx['db'];
 
@@ -121,7 +122,10 @@ function reproductionOn(db: Db, f: FindingRow, candidate: CandidateRow, criterio
   pool.sort((x, y) => (x.key === f.check ? -1 : y.key === f.check ? 1 : x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
   const covering = pool.map((c) => {
     const st = checkState(db, f.project, c as Parameters<typeof checkState>[2], { candidate, effective: version, environment: null, artifact: null });
-    const state = st.state === 'failed' || st.state === 'passed' ? st.state : st.pending !== null ? 'pending' : 'none';
+    // Pending only while its registration can still produce a result (an
+    // execution in flight); a cancelled or interrupted one never will, so
+    // waiting on it would be a silent stall: it reads as no result.
+    const state = st.state === 'failed' || st.state === 'passed' ? st.state : st.pending !== null && IN_FLIGHT.includes(st.pending.status) ? 'pending' : 'none';
     return { check: c.key, state, result: st.decider?.id ?? null };
   });
   const failed = covering.find((c) => c.state === 'failed');

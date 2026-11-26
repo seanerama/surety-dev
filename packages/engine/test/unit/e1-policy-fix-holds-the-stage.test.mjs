@@ -24,6 +24,7 @@ const { migrate } = await import(join(dist, 'store', 'migrate.js'));
 const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions', 'tx.js'));
 const { recordCheckResult } = await import(join(dist, 'store', 'transitions', 'baseline.js'));
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
+const { askUndispositioned } = await import(join(dist, 'store', 'transitions', 'findings.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {} });
 
@@ -162,4 +163,20 @@ test('E1: a planned project with the same covering finding: no policy, the stage
   post(db, 'chk_acc2', 'cand_1', 1);
   assert.deepEqual(stage(db), { status: 'eligible', repair_attempts: 1 });
   assert.equal(db.prepare(`SELECT disposition FROM findings WHERE id = 'fnd_1'`).get().disposition, null);
+});
+
+test('E1 with the repair allowance exhausted: the policy declines, the stage follows the repair loop (sent back) and the finding stays owed: the sweep asks the owner with policy_fix_refused', (t) => {
+  const db = store(t);
+  db.prepare(`UPDATE prototype_iterations SET limits_json = '{"prototype_repairs_per_iteration":0}' WHERE id = 'it_1'`).run();
+  finding(db);
+  post(db, 'chk_acc', 'cand_1', 0);
+  post(db, 'chk_smoke', 'cand_1', 0);
+  post(db, 'chk_acc2', 'cand_1', 1);
+  assert.deepEqual(stage(db), { status: 'eligible', repair_attempts: 1 }, 'sent back as before E1');
+  assert.equal(fixes(db).length, 0, 'no fix registered');
+  assert.equal(db.prepare(`SELECT disposition FROM findings WHERE id = 'fnd_1'`).get().disposition, null);
+  const n = transact(db, ENGINE_ACTOR, (tx) => askUndispositioned(tx, { project: 'prj_1' }));
+  assert.equal(n, 1, 'the owed question');
+  const d = db.prepare(`SELECT * FROM decisions WHERE kind = 'finding_disposition' AND subject_id = 'fnd_1' AND status = 'open'`).get();
+  assert.match(JSON.parse(d.evidence).policy_fix_refused, /repair_allowance_exhausted/);
 });
