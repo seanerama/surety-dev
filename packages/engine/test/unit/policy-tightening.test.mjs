@@ -65,7 +65,7 @@ function repoIn(t) {
 // A rapid prototype at T1 whose iteration's brief (spec revision sr_1) is
 // approved and building; requirements R1 to R3; one effective version at B0
 // with check a (R1.1); a Verifier run of the iteration.
-async function setup(t, { mode = 'rapid_prototype', approved = true, runIteration = 'it_1', status = 'building' } = {}) {
+async function setup(t, { mode = 'rapid_prototype', approved = true, runIteration = 'it_1', status = 'building', planIteration = 'it_1' } = {}) {
   const r = repoIn(t);
   const baseFiles = { '.surety/checks/protected-policy.json': GOV, ...check('a', ['R1.1']), 'src/app.js': 'v1\n' };
   const B0 = r.commit(r.treeOf(baseFiles));
@@ -101,6 +101,20 @@ async function setup(t, { mode = 'rapid_prototype', approved = true, runIteratio
     B0,
     AT,
     runIteration,
+  );
+  // The authoring's plan, its bundle made by the Architect's run of `planIteration`.
+  run(
+    `INSERT INTO runs (id, created_at, project, seq, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, iteration, work_item) VALUES ('run_arch', ?, 'prj_1', 2, 'architect', 'one_shot', 'ended', 'scripted', '1', 'm', ?, ?, 0, ?, 'wi_replan')`,
+    AT,
+    B0,
+    AT,
+    planIteration,
+  );
+  run(`INSERT INTO plan_bundles (id, created_at, project, phase_number, status, run, head, blobs, artifacts, versions) VALUES ('bnd_1', ?, 'prj_1', 2, 'published', 'run_arch', 'h', '{}', '{}', '{}')`, AT);
+  run(`INSERT INTO phase_plans (id, created_at, project, phase_number, prepared_against_revision, git_path, bundle, status) VALUES ('pp_2', ?, 'prj_1', 2, ?, 'p2', 'bnd_1', 'published')`, AT, B0);
+  run(
+    `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold) VALUES ('wi_auth', ?, 'prj_1', 1, 'check_authoring', '{"phase_plan":"pp_2"}', 'awaiting_decision', 'phase', 'pp_2', 1, 0, 0, 0, 0)`,
+    AT,
   );
   const propose = (id, files) => {
     const tree = r.treeOf({ ...baseFiles, ...files });
@@ -169,6 +183,8 @@ test('(c-f) not covered: an unclassifiable change of what can execute, a predece
     { name: 'check_commands changed', opts: {}, files: { '.surety/checks/protected-policy.json': GOV2, ...check('b', ['R2.1']) }, kind: 'check_correction_unclassifiable', why: /classified_unclassifiable/ },
     { name: "another iteration's run", opts: { runIteration: 'it_0' }, files: check('b', ['R2.1']), kind: 'check_correction_tightening', why: /not_this_iterations_authoring/ },
     { name: 'no approved brief', opts: { approved: false }, files: check('b', ['R2.1']), kind: 'check_correction_tightening', why: /no_approved_brief/ },
+    // M636 (f) as Verifier 2 found it: iteration 1's (narrowed gap) authoring run while iteration 2 is current.
+    { name: "a predecessor's plan", opts: { planIteration: 'it_0' }, files: check('b', ['R2.1']), kind: 'check_correction_tightening', why: /not_this_iterations_plan: work wi_auth belongs to plan pp_2, whose bundle was made in iteration it_0/ },
   ];
   for (const c of cases) {
     const s = await setup(t, c.opts);

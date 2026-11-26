@@ -524,6 +524,12 @@ export function policyCoverage(tx: Tx, p: ProposalRow, c?: Pick<StoredClassifica
   if (!cls || !engineClassified(cls as unknown as Record<string, unknown>) && c === undefined) return none('not_classified_by_the_engine', at);
   if (cls.change_kind !== 'tightening') return none(`classified_${cls.change_kind}`, at);
   if (p.proposed_by !== 'verifier_run' || runIteration(tx.db, p.run) !== it.id) return none('not_this_iterations_authoring', at);
+  // The plan the proposal's work belongs to must be this iteration's own
+  // (Verifier 2 on M636 (f): a predecessor's narrowed gap authoring ran
+  // while the next iteration was current): its bundle made by a run of the
+  // iteration; a correction's, the finding's run's.
+  const owner = workIteration(tx.db, p.run);
+  if (owner.iteration !== it.id) return none(`not_this_iterations_plan: ${owner.basis}`, at);
   if (proposalBoundaryErrors(tx.db, p.id).length > 0) return none('import_boundary_undeclared', at);
   const affected = (cls.affected_checks ?? []).map((a) => a.check).sort();
   const byKey = new Map((cls.discovery?.checks ?? []).map((x) => [x.key, x]));
@@ -577,3 +583,31 @@ function policyTightening(tx: Tx, p: ProposalRow, c: StoredClassification): Poli
 }
 
 const policyEvidence = (r: PolicyResult): { evidence?: Record<string, unknown> } => (!r.approved && r.reason !== null ? { evidence: { policy_not_covered: r.reason } } : {});
+
+// The iteration the work behind a proposal's run belongs to, read from
+// recorded relationships, never from time: a check authoring's plan (its
+// subject's phase_plan, or a gap item's trigger plan) is the iteration's
+// whose run made that plan's bundle (plan_bundles.run → runs.iteration); a
+// check correction's, the iteration of the run that raised its finding.
+// Unknown (no plan, no bundle, no run): iteration null, the basis saying so.
+function workIteration(db: Tx['db'], run: string | null): { iteration: string | null; basis: string } {
+  if (run === null) return { iteration: null, basis: 'the proposal names no run' };
+  const w = db.prepare('SELECT w."id", w."kind", w."subject", w."trigger_source", w."trigger_id" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ?').get(run) as
+    | { id: string; kind: string; subject: string; trigger_source: string; trigger_id: string }
+    | undefined;
+  if (!w) return { iteration: null, basis: `run ${run} has no work item` };
+  let subject: { phase_plan?: unknown; finding?: unknown } = {};
+  try {
+    subject = (JSON.parse(w.subject) as typeof subject) ?? {};
+  } catch {
+    subject = {};
+  }
+  if (w.kind === 'check_correction' && typeof subject.finding === 'string') {
+    const it = (db.prepare('SELECT r."iteration" FROM "findings" f JOIN "runs" r ON r."id" = f."source_run" WHERE f."id" = ?').get(subject.finding) as { iteration: string | null } | undefined)?.iteration ?? null;
+    return { iteration: it, basis: `work ${w.id} corrects finding ${subject.finding}, raised by a run of ${it ?? 'no iteration'}` };
+  }
+  const plan = typeof subject.phase_plan === 'string' ? subject.phase_plan : w.trigger_source === 'authoring_gap' ? w.trigger_id : null;
+  if (plan === null) return { iteration: null, basis: `work ${w.id} names no plan` };
+  const it = (db.prepare('SELECT r."iteration" FROM "phase_plans" p JOIN "plan_bundles" b ON b."id" = p."bundle" JOIN "runs" r ON r."id" = b."run" WHERE p."id" = ?').get(plan) as { iteration: string | null } | undefined)?.iteration ?? null;
+  return { iteration: it, basis: `work ${w.id} belongs to plan ${plan}, whose bundle ${it === null ? 'was made by no run of an iteration' : `was made in iteration ${it}`}` };
+}
