@@ -266,8 +266,14 @@ export class Scheduler {
   }
 
   private async alphaPolicy(project: string): Promise<void> {
-    const due = await this.rt.read<{ candidate: string; environment: string; key: string } | null>('deploy.policy_due', { project });
+    const due = await this.rt.read<{ candidate: string; environment: string; key: string; ask?: true } | null>('deploy.policy_due', { project });
     if (!due) return;
+    // D4 (DECISIONS item 57): outside the approved brief's target, the
+    // owner's decision is raised first; nothing is prepared or sealed.
+    if (due.ask === true) {
+      await this.rt.engine('deploy.target_ask', { project, candidate: due.candidate, environment: due.environment });
+      return;
+    }
     // Refused at its preparation (the runtime, the artifact): recorded
     // `not_issued` under its key with the reason, never made again (the 31b
     // review's S6). Any other error is counted on the key's row and the key

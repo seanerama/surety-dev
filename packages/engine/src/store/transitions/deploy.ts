@@ -60,6 +60,8 @@ import {
 } from './observe.js';
 import { recordCompatibility } from '../../deploy/compatibility.js';
 import type { TreeAnswer } from '../../deploy/output-kind.js';
+import { bindTarget, confirmRequired, consumeConfirmation, outsideTarget, targetAnswer, targetBindingOf } from './deploy-target.js';
+import { recordDelegatedAction } from './delegation.js';
 
 type Db = Tx['db'];
 
@@ -746,6 +748,9 @@ export interface RequestArgs {
   // Who requests (D6 §6.8, A.3): the owner's command, or the engine under
   // `alpha_deploy: on_phase_complete`.
   requested_by?: 'human' | 'policy';
+  // D4: the preview hash of the deployment_target_approval the owner's
+  // request confirms.
+  preview_hash?: unknown;
 }
 
 // ---- the deployment request and its key (D6 §6.8, A.3; K9; B14; SEAM.md §354) ----------------
@@ -855,7 +860,7 @@ function settleRequest(tx: Tx, op: OpRow, outcome: 'deployed' | 'failed' | 'not_
 // adapter is qualified, under a key no request has had. Nothing while a
 // deployment of the candidate and environment is pending: the policy never
 // joins another request.
-export function policyRequestDue(db: Db, args: { project: string }): { candidate: string; environment: string; key: string } | null {
+export function policyRequestDue(db: Db, args: { project: string }): { candidate: string; environment: string; key: string; ask?: true } | null {
   if (projectOptions(db, args.project).alpha_deploy !== 'on_phase_complete') return null;
   // The policy waits for a specification change to settle (the driver's
   // ruling 1 on M401's T1 runs, slice 37): no request while a change of the
@@ -891,9 +896,31 @@ export function policyRequestDue(db: Db, args: { project: string }): { candidate
     if (existing && !preparing(existing) && !reopened(db, existing, candidate)) continue;
     const all = db.prepare('SELECT * FROM "deployment_authorizations" WHERE "candidate" = ? AND "environment" = ?').all(candidate, env.id) as AuthRow[];
     if (all.some((a) => pending(db, a))) continue;
+    // D4 (DECISIONS item 57): outside the approved brief's target, the
+    // policy requests nothing before the owner's decision: asked once (the
+    // tick raises it), then skipped while open or rejected, requested once
+    // approved.
+    if (outsideTarget(db, args.project, env, config) !== null) {
+      const answered = targetAnswer(db, candidate, config.id);
+      if (answered === null) return { candidate, environment: env.name, key, ask: true };
+      if (answered.state !== 'approve') continue;
+    }
     return { candidate, environment: env.name, key };
   }
   return null;
+}
+
+// D4: the owner rejected a deployment outside the approved brief's target:
+// the policy's request recorded `not_issued` `owner_rejected` under its key,
+// never made again for that configuration.
+export function recordTargetRejected(tx: Tx, args: { project: string; candidate: string; environment: string; config: string }): void {
+  const key = requestKey(tx.db, { project: args.project, candidate: args.candidate, config: args.config });
+  const existing = requestOfKey(tx.db, args.project, key);
+  if (existing && existing.requested_by === 'policy') {
+    tx.db.prepare(`UPDATE "deployment_requests" SET "outcome" = 'not_issued', "reason" = 'owner_rejected' WHERE "id" = ? AND "outcome" <> 'deployed'`).run(existing.id);
+    return;
+  }
+  recordRequest(tx, { project: args.project, key, requested_by: 'policy', candidate: args.candidate, environment: args.environment, authorization: null, work_item: null, outcome: 'not_issued', refusal: { code: 'owner_rejected', reason: 'the owner rejected the deployment outside the approved brief\'s target' } });
 }
 
 // A policy request recorded `not_issued` is made again under its key when
@@ -1161,6 +1188,24 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
   const pendingRow = all.find((a) => pending(tx.db, a));
   const requestedBy = args.requested_by ?? 'human';
   const key = requestKey(tx.db, { project: args.project, candidate: candidate.id, config: config.id });
+  // D4 (DECISIONS item 57): a deployment outside the approved brief's
+  // target needs the owner's decision before anything of it is authorized:
+  // the owner's request confirms it with the decision's preview hash (409
+  // confirm_required otherwise, the decision committed); the policy's
+  // requests it only once approved.
+  if (requestedBy === 'human') {
+    const c = consumeConfirmation(tx, { project: args.project, candidate: candidate.id, env, config, preview_hash: args.preview_hash });
+    if (!c.confirmed) {
+      const r = confirmRequired({ environment: env.name, decision: c.decision?.id ?? '', preview_hash: c.decision?.preview_hash ?? '', origin: c.origin });
+      return { status: r.status, body: r.body() };
+    }
+  } else if (outsideTarget(tx.db, args.project, env, config) !== null && targetAnswer(tx.db, candidate.id, config.id)?.state !== 'approve') {
+    return { status: 200, body: { request: null, skipped: 'outside_approved_target' } };
+  }
+  // An environment the brief named but that was not configured when it was
+  // approved is bound to the identity it is first requested under.
+  const bound = targetBindingOf(tx.db, args.project);
+  if (bound !== null && bound.config_identity === null && (env.name === bound.name || env.id === bound.environment)) bindTarget(tx, { iteration: bound.iteration });
   if (requestedBy === 'policy') {
     // The same key admits no second request (B14), and the policy's request
     // derives its own authorization: it never joins a pending one (M407 (h)).
@@ -1303,7 +1348,27 @@ export function requestDeployment(tx: Tx, args: RequestArgs, evaluate: Evaluate)
     },
     {},
   );
-  record(auth.id, 'pending');
+  const made = record(auth.id, 'pending');
+  // D4, D7: the policy's request of the approved brief's deployment is an act
+  // performed under the brief.
+  if (requestedBy === 'policy') {
+    const b = targetBindingOf(tx.db, args.project);
+    if (b !== null) {
+      const brief = (tx.db.prepare('SELECT "brief_decision" FROM "prototype_iterations" WHERE "id" = ?').get(b.iteration) as { brief_decision: string | null } | undefined)?.brief_decision ?? null;
+      recordDelegatedAction(tx, {
+        project: args.project,
+        iteration: b.iteration,
+        kind: 'deployment_requested',
+        subject_type: 'deployment_request',
+        subject_id: made.id,
+        authorized_by_kind: 'decision',
+        authorized_by: targetAnswer(tx.db, candidate.id, config.id)?.decision.id ?? brief,
+        performed_by: 'policy:alpha_deploy',
+        scope: { candidate: candidate.id, environment: env.name, config: config.id, config_identity: config.config_identity, brief_target: b },
+        basis: { authorization: auth.id, evaluation: evaluation.id },
+      });
+    }
+  }
   return answer(201, now, evaluation);
 }
 

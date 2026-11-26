@@ -55,6 +55,7 @@ import type { Tx } from '../store/transitions/tx.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import type { BundleContent } from '../plan/bundle.js';
 import { recordDelegatedAction } from '../store/transitions/delegation.js';
+import { bindTarget } from '../store/transitions/deploy-target.js';
 import type { PlanCheckResult } from '../plan/check.js';
 
 type Db = Tx['db'];
@@ -1040,7 +1041,11 @@ export function briefApproved(tx: Tx, args: { project: string; run: string; deci
   tx.db
     .prepare(`UPDATE "prototype_iterations" SET "brief_spec_revision" = ?, "brief_decision" = ?, "approved_at" = ?, "status" = 'building', "next_step" = ?, "outcome_reason" = NULL WHERE "id" = ?`)
     .run(args.spec_revision, args.decision, tx.at, 'none: the first plan is being made', it.id);
-  tx.emit('prototype.brief_approved', { project: args.project, iteration: it.id, spec_revision: args.spec_revision }, { decision: args.decision, run: args.run, brief_record: m.brief_record, brief_version: m.brief_version });
+  // D4 (DECISIONS item 57): automatic deployment is bound to the
+  // environment the approved brief names, as configured now.
+  bindTarget(tx, { iteration: it.id });
+  const bound = tx.db.prepare('SELECT "target_environment", "target_config", "target_config_identity" FROM "prototype_iterations" WHERE "id" = ?').get(it.id) as { target_environment: string | null; target_config: string | null; target_config_identity: string | null };
+  tx.emit('prototype.brief_approved', { project: args.project, iteration: it.id, spec_revision: args.spec_revision }, { decision: args.decision, run: args.run, brief_record: m.brief_record, brief_version: m.brief_version, target: bound });
   const work = observeTrigger(tx, { project: args.project, kind: 'replan', trigger_source: FIRST_PLAN_SOURCE, trigger_id: it.id, trigger_generation: 1, subject: { cause: FIRST_PLAN_SOURCE }, chain: 0 }, { iteration: it.id }).work_item.id;
   tx.emit('prototype.first_plan_requested', { project: args.project, iteration: it.id }, { work_item: work, bounds: PROTOTYPE_BOUNDS });
 }

@@ -838,3 +838,63 @@ test('D8: a preparation under the allowance whose model the role no longer reque
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM runs WHERE work_item = ?').get(w.id).n, 0);
   assert.ok(decisionsOf(db, p.id, 'prototype_preparation_approval').some((x) => x.subject_id === it2 && x.status === 'open'), 'the owner is asked');
 });
+
+// ---- DECISIONS item 57, D4 (S5): the deployment bound to the approved brief's target ----
+
+const DT = await import(join(dist, 'store', 'transitions', 'deploy-target.js'));
+
+function envWithConfig(db, project, name, identity, port) {
+  db.pragma('foreign_keys = OFF');
+  const cfg = `envc_${name}_${identity}`;
+  let env = db.prepare('SELECT id FROM environments WHERE project = ? AND name = ?').get(project, name)?.id;
+  if (!env) {
+    env = `env_${name}`;
+    db.prepare(`INSERT INTO environments (id, created_at, project, name, adapter, adapter_config_ref, verify_spec, prefix) VALUES (?, ?, ?, ?, 'local_service', 'ref', '{}', ?)`).run(env, AT, project, name, `pfx-${name}`);
+  } else db.prepare(`UPDATE environments SET prefix = COALESCE(prefix, ?) WHERE id = ?`).run(`pfx-${name}`, env);
+  db.prepare(`UPDATE environment_configs SET status = 'superseded' WHERE environment = ?`).run(env);
+  const version = db.prepare('SELECT COALESCE(MAX(version), 0) + 1 AS v FROM environment_configs WHERE environment = ?').get(env).v;
+  db.prepare(`INSERT INTO environment_configs (id, created_at, project, environment, version, content, config_identity, secret_digests, status, written_by, written_at) VALUES (?, ?, ?, ?, ?, ?, ?, '{}', 'current', 'human', ?)`)
+    .run(cfg, AT, project, env, version, JSON.stringify({ adapter: 'local_service', adapter_version: '1', targets: ['web'], port }), identity, AT);
+  db.prepare('UPDATE environments SET current_config = ? WHERE id = ?').run(cfg, env);
+  db.pragma('foreign_keys = ON');
+  return { env, cfg };
+}
+
+test('D4: the brief\'s environment is bound at approval with its identity; another environment, or the bound one under another identity, is outside; the decision previews the target and its answer is read back', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create();
+  const alpha = envWithConfig(db, p.id, 'alpha', 'idA', 18001);
+  const demo = envWithConfig(db, p.id, 'demo', 'idD', 18002);
+  answer(db, p.id, decisionsOf(db, p.id, 'prototype_preparation_approval')[0]);
+  const b = prepareBrief(db, p.id);
+  answer(db, p.id, b.decision);
+  applySpecApproval(db, p.id, b.decision);
+  const it = iteration(db, p.iteration);
+  assert.deepEqual([it.target_environment, it.target_config, it.target_config_identity], [alpha.env, alpha.cfg, 'idA'], 'bound at the approval');
+  const envRow = (id) => db.prepare('SELECT * FROM environments WHERE id = ?').get(id);
+  const cfgRow = (id) => db.prepare('SELECT * FROM environment_configs WHERE id = ?').get(id);
+  assert.equal(DT.outsideTarget(db, p.id, envRow(alpha.env), cfgRow(alpha.cfg)), null);
+  assert.equal(DT.outsideTarget(db, p.id, envRow(demo.env), cfgRow(demo.cfg)).origin, 'other_environment');
+  const alpha2 = envWithConfig(db, p.id, 'alpha', 'idA2', 18003);
+  assert.equal(DT.outsideTarget(db, p.id, envRow(alpha.env), cfgRow(alpha2.cfg)).origin, 'config_changed', 'bound to the identity, not the name');
+  // The question about demo.
+  db.pragma('foreign_keys = OFF');
+  db.prepare(`INSERT INTO candidates (id, created_at, project, seq, revision, lineage, nominated_at, nominated_by, progress) VALUES ('cand_u1', ?, ?, 1, 'sha_c1', 'lin_1', ?, 'engine_cadence', 'developing')`).run(AT, p.id, AT);
+  db.pragma('foreign_keys = ON');
+  const d = transact(db, ENGINE_ACTOR, (tx) => DT.askTarget(tx, { project: p.id, candidate: 'cand_u1', environment: 'demo' }));
+  assert.equal(d.kind, 'deployment_target_approval');
+  const m = JSON.parse(d.dependency_manifest);
+  assert.deepEqual([m.iteration, m.candidate, m.environment, m.environment_name, m.adapter, m.adapter_version, m.port, m.config, m.config_identity, m.origin], [p.iteration, 'cand_u1', demo.env, 'demo', 'local_service', '1', 18002, demo.cfg, 'idD', 'other_environment']);
+  assert.deepEqual(m.brief_target, { name: 'alpha', id: alpha.env, bound_config: alpha.cfg, bound_config_identity: 'idA' });
+  assert.match(d.question, /the approved brief names environment alpha, not demo/);
+  assert.equal(DT.targetAnswer(db, 'cand_u1', demo.cfg).state, 'open');
+  // The owner's request without the hash is refused naming it; with it, confirmed (consumed as approved).
+  const c1 = transact(db, HUMAN, (tx) => DT.confirmTarget(tx, { project: p.id, candidate: 'cand_u1', environment: 'demo' }));
+  assert.deepEqual([c1.required, c1.decision, c1.preview_hash, c1.confirmed], [true, d.id, d.preview_hash, false]);
+  const c2 = transact(db, HUMAN, (tx) => DT.consumeConfirmation(tx, { project: p.id, candidate: 'cand_u1', env: envRow(demo.env), config: cfgRow(demo.cfg), preview_hash: d.preview_hash }));
+  assert.deepEqual(c2, { confirmed: true });
+  assert.equal(DT.targetAnswer(db, 'cand_u1', demo.cfg).state, 'approve');
+  // A planned project is unchanged: no binding.
+  db.prepare(`UPDATE projects SET mode = 'planned' WHERE id = ?`).run(p.id);
+  assert.equal(DT.targetBindingOf(db, p.id), null);
+});

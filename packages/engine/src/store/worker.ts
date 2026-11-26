@@ -212,6 +212,7 @@ import { planView, specView } from '../plan/reads.js';
 import { observeHost, paceView } from '../plan/pace.js';
 import { iterationReceipt, listIterations, readIteration } from '../prototype/iterations.js';
 import { briefFacts, requestPreparation } from '../prototype/brief.js';
+import { askTarget, confirmTarget } from './transitions/deploy-target.js';
 import { iterate } from '../prototype/iterate.js';
 import { askOfSession, enforceIterationLimit, resumeIteration, retryIteration, runsUnderWay } from './transitions/prototype.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctRequestAgain, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
@@ -878,6 +879,9 @@ const ENGINE_OPS: Record<string, (tx: Tx, args: any) => unknown> = {
   'pace.observe_host': (tx, a) => observeHost(tx, a),
   // The request `alpha_deploy: on_phase_complete` owes (D6 §6.8; SEAM.md §354).
   'deploy.policy_refused': (tx, a) => policyRequestRefused(tx, a),
+  // D4 (DECISIONS item 57): the deployment target's decision.
+  'deploy.target_ask': (tx, a: { project: string; candidate: string; environment: string }) => askTarget(tx, a),
+  'deploy.target_confirm': (tx, a: { project: string; candidate: string; environment: string; preview_hash?: unknown }) => confirmTarget(tx, a),
   'deploy.policy_preparation_failed': (tx, a) => policyPreparationFailed(tx, a),
   'deploy.policy_request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'policy' }, (t, e) => evaluateGate(t, e as never)),
   // D6 §2.1, §2.4 (B01; SEAM.md §389): a turn's settlement, one fact at a
