@@ -41,11 +41,12 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
 
-import { outputText, checkProject, installIndexedPlan, qualifyRunnerByFixture, resultRow, waitRecorded } from './harness/checks/fixtures.mjs';
+import { outputText, checkProject, executionsOf, installIndexedPlan, qualifyRunnerByFixture, resultRow } from './harness/checks/fixtures.mjs';
+import { waitFor } from './harness/engine.mjs';
 import { reasonSubjects, sharedFixture, stageGate } from './harness/gates.mjs';
 import { addItem, pinStep, roleThat, runToEnd, waitForCandidates } from './harness/gitruns.mjs';
 import { changePolicy } from './harness/journal.mjs';
-import { runsOf, tickUntil } from './harness/runs.mjs';
+import { runsOf, tick, tickUntil } from './harness/runs.mjs';
 import { step } from './harness/scripted.mjs';
 import { sandboxEngine } from './harness/sandbox/lane.mjs';
 import { PRINT_CHECK, REV, checksOf, codeAt, delta, materialize, printOrder, walkthrough } from './harness/wcp/index.mjs';
@@ -58,6 +59,19 @@ function r5Checks() {
   const all = checksOf(2, { tightened: true });
   return Object.fromEntries(Object.entries(all).filter(([p]) => !p.startsWith('.surety/checks/defs/') || R5.some((k) => p === `.surety/checks/defs/${k}.json`)).filter(([p]) => !p.startsWith('.surety/checks/post-deploy/')));
 }
+// As checks/fixtures.mjs waitRecorded, with room for six page-driving checks
+// run one after another in check domains (its 60 s is not enough for them).
+const waitRecorded = (fx, project, candidate, keys, { what }) =>
+  waitFor(
+    async () => {
+      const latest = {};
+      for (const x of executionsOf(fx.home, candidate)) if (keys.includes(x.key)) latest[x.key] = x;
+      if (keys.every((k) => latest[k]?.status === 'recorded' && latest[k]?.result)) return latest;
+      await tick(fx.engine, project, { rounds: 1 });
+      return undefined;
+    },
+    { intervalMs: 500, timeoutMs: 600_000, what },
+  );
 const writes = (files) => Object.entries(files).filter(([, c]) => c !== null).map(([p, c]) => step.write(p, c));
 
 // One project: the stage writes a88fa57's code, then a fix writes 1d32e51's.
