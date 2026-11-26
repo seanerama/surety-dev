@@ -32,6 +32,8 @@ const { bootstrapProject, setPaused } = await import(join(dist, 'store', 'transi
 const { readIteration } = await import(join(dist, 'prototype', 'iterations.js'));
 const P = await import(join(dist, 'store', 'transitions', 'prototype.js'));
 const C = await import(join(dist, 'store', 'transitions', 'prototype-clock.js'));
+const { markHolds } = await import(join(dist, 'scheduler', 'holds.js'));
+const { transitionWork, getWorkItem } = await import(join(dist, 'store', 'transitions', 'work.js'));
 
 setEngineSettings({ lease_ttl: 600, git_deadline: 30, decision_targets: {} });
 const HUMAN = { actor_kind: 'human', actor_id: null, request_id: 'req-1' };
@@ -194,4 +196,40 @@ test('stallOf: no open plan, no stall', async (t) => {
   const { db, create } = scratch(t);
   const p = await create(4 * 3600, 1 * H);
   assert.equal(C.stallOf(db, p.id), null);
+});
+
+// A work item of the iteration with a run attributed to it, as dispatch records one.
+function workOfIteration(db, project, iteration, status = 'executing') {
+  db.prepare(
+    `INSERT INTO work_items (id, created_at, project, seq, kind, subject, status, trigger_source, trigger_id, trigger_generation, repair_attempts, no_progress_count, preflight_refusals, dispatch_hold)
+     VALUES ('wi_p', ?, ?, 99, 'replan', '{}', ?, 'test', 'wi_p', 1, 0, 0, 0, 0)`,
+  ).run(AT, project, status);
+  db.prepare(
+    `INSERT INTO runs (id, created_at, project, seq, work_item, role, kind, state, backend, backend_version, model_requested, base_revision, deadline_at, quarantined, iteration)
+     VALUES ('run_p', ?, ?, 99, 'wi_p', 'architect', 'one_shot', 'ended', 'scripted', '1', 'm', ?, ?, 0, ?)`,
+  ).run(AT, project, 'a'.repeat(40), AT, iteration);
+}
+
+test('objection 237: the park opens the parked interval in its own transaction', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create(4 * 3600, 1 * H);
+  workOfIteration(db, p.id, p.iteration);
+  transact(db, ENGINE_ACTOR, (tx) => transitionWork(tx, getWorkItem(tx, 'wi_p'), 'parked', { blocker: JSON.stringify({ reason: 'repairs_exhausted', raised_at: tx.at, decision: null }) }));
+  const row = db.prepare(`SELECT * FROM prototype_clock_exclusions WHERE iteration = ? AND reason = 'parked_on_blocker'`).get(p.iteration);
+  assert.equal(row?.cause_id, 'wi_p', 'recorded with the park, before any tick');
+  assert.equal(row.to_at, null);
+});
+
+test('objection 237: a park the tick has not yet seen is excluded before the tick settles the runtime (the clock advanced between the park and the tick)', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create(4 * 3600, 5 * H);
+  // Parked 3 h ago, recorded on the item only (as before the park hook): the tick must open the interval first.
+  workOfIteration(db, p.id, p.iteration, 'parked');
+  db.prepare(`UPDATE work_items SET blocker = ? WHERE id = 'wi_p'`).run(JSON.stringify({ reason: 'repairs_exhausted', raised_at: ago(3 * H), decision: null }));
+  transact(db, ENGINE_ACTOR, (tx) => markHolds(tx));
+  const it = iterationRow(db, p.iteration);
+  assert.notEqual(it.status, 'limit_reached', `5 h wall less 3 h parked is under 4 h (${it.status}: ${it.outcome_reason})`);
+  assert.equal(it.status, 'failed', 'failed on its parked work, as the status sync says');
+  const row = db.prepare(`SELECT * FROM prototype_clock_exclusions WHERE iteration = ? AND reason = 'parked_on_blocker'`).get(p.iteration);
+  assert.ok(Math.abs(Date.parse(row.from_at) - (Date.now() - 3 * H)) < 5000);
 });

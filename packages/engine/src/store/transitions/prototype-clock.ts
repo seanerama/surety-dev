@@ -153,6 +153,42 @@ export function syncClockExclusions(tx: Tx, it: { id: string; project: string },
   else closeExclusion(tx, { iteration: it.id, reason: 'engine_stall' });
 }
 
+// The park recorded (work.ts transitionWork, in the transaction that parks
+// the item; objection 237): the parked interval of the iteration the item's
+// work is attributed to (a run of it), when that is the project's current
+// iteration with its brief approved, opened now, so that no limit is ever
+// evaluated on a park without its exclusion. The status sync keeps it and
+// closes it (syncClockExclusions).
+export function clockWorkParked(tx: Tx, item: { id: string; project: string; blocker?: string | null }): void {
+  if (!isPrototype(tx.db, item.project)) return;
+  const it = tx.db.prepare('SELECT "id", "status", "approved_at" FROM "prototype_iterations" WHERE "project" = ? ORDER BY "seq" DESC LIMIT 1').get(item.project) as
+    | { id: string; status: string; approved_at: string | null }
+    | undefined;
+  if (!it || it.approved_at === null || !['building', 'awaiting_owner', 'failed'].includes(it.status)) return;
+  if (!tx.db.prepare('SELECT 1 FROM "runs" WHERE "work_item" = ? AND "iteration" = ? LIMIT 1').get(item.id, it.id)) return;
+  openExclusion(tx, { project: item.project, iteration: it.id, reason: 'parked_on_blocker', cause_kind: 'work_item', cause_id: item.id });
+}
+
+// At each tick, before any limit is settled (scheduler/holds.ts markHolds;
+// objection 237): every interval the tick itself observes (a park recorded
+// before this code, an engine stall) opened for each rapid prototype's
+// current approved iteration, as the status sync then keeps them.
+export function openDueExclusions(tx: Tx): void {
+  const rows = tx.db
+    .prepare(
+      `SELECT p."id", p."project" FROM "prototype_iterations" p JOIN "projects" j ON j."id" = p."project"
+       WHERE j."mode" = 'rapid_prototype' AND p."approved_at" IS NOT NULL AND p."status" IN ('building', 'awaiting_owner', 'failed')
+         AND p."seq" = (SELECT MAX(q."seq") FROM "prototype_iterations" q WHERE q."project" = p."project")`,
+    )
+    .all() as { id: string; project: string }[];
+  for (const it of rows) {
+    const parked = tx.db
+      .prepare(`SELECT w."id", w."blocker" FROM "work_items" w WHERE w."project" = ? AND w."status" = 'parked' AND w."id" IN (SELECT "work_item" FROM "runs" WHERE "iteration" = ? AND "work_item" IS NOT NULL) ORDER BY w."seq" LIMIT 1`)
+      .get(it.project, it.id) as { id: string; blocker: string | null } | undefined;
+    syncClockExclusions(tx, it, parked ?? null);
+  }
+}
+
 // The engine stalled (D5): the project's open plan is held by its phase
 // gate, fresh and not satisfied, with no owner act that clears it
 // (plan/reads.ts phaseGateHold, M642), and nothing is under way or can be
