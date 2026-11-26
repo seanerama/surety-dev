@@ -26,7 +26,7 @@ import { ENFORCEMENT, OPEN_ITERATION_STATUSES, currentDeploymentRequest, running
 import { projectPolicy } from '../store/transitions/settings.js';
 import { redactValue } from '../records/redact.js';
 import { delegatedActionsOf } from '../store/transitions/delegation.js';
-import { servedBrief } from './brief.js';
+import { nextIteratePreparation, preparationAuthorityOf, servedBrief } from './brief.js';
 
 type Db = Database;
 
@@ -214,15 +214,21 @@ function ownerActs(db: Db, it: IterationRow) {
 // Approval of each preparation to its run's end (R5), summed over the
 // preparations whose run ended; null while none has.
 function preparationSeconds(db: Db, it: IterationRow): number | null {
+  // D8: a preparation under the allowance is authorized when its work is
+  // created (the iteration's creation).
   const rows = db
     .prepare(
-      `SELECT d."consumed_at", r."finished_at" FROM "decisions" d
-       JOIN "work_items" w ON w."kind" = 'brief_preparation' AND json_extract(w."subject", '$.decision') = d."id"
-       JOIN "runs" r ON r."work_item" = w."id"
-       WHERE d."kind" = 'prototype_preparation_approval' AND d."subject_id" = ? AND d."status" = 'consumed' AND r."finished_at" IS NOT NULL
-       ORDER BY r."seq"`,
+      `SELECT * FROM (
+         SELECT d."consumed_at", r."finished_at", r."seq" FROM "decisions" d
+         JOIN "work_items" w ON w."kind" = 'brief_preparation' AND json_extract(w."subject", '$.decision') = d."id"
+         JOIN "runs" r ON r."work_item" = w."id"
+         WHERE d."kind" = 'prototype_preparation_approval' AND d."subject_id" = ? AND d."status" = 'consumed' AND r."finished_at" IS NOT NULL
+         UNION ALL
+         SELECT w."created_at" AS "consumed_at", r."finished_at", r."seq" FROM "work_items" w JOIN "runs" r ON r."work_item" = w."id"
+         WHERE w."kind" = 'brief_preparation' AND w."trigger_source" = 'prototype_preparation' AND w."trigger_id" = 'allowance:' || ? AND r."finished_at" IS NOT NULL)
+       ORDER BY "seq"`,
     )
-    .all(it.id) as { consumed_at: string | null; finished_at: string }[];
+    .all(it.id, it.id) as { consumed_at: string | null; finished_at: string }[];
   let total: number | null = null;
   for (const r of rows) {
     const s = between(r.consumed_at, r.finished_at, ['the preparation authorized', 'its run ended']);
@@ -255,7 +261,8 @@ export function listIterations(db: Db, args: { project: string }) {
   mustProject(db, args.project);
   const head = envelope(db);
   const rows = db.prepare('SELECT * FROM "prototype_iterations" WHERE "project" = ? ORDER BY "seq"').all(args.project) as IterationRow[];
-  return { ...head, iterations: rows.map((r) => summaryOf(r, db)) };
+  // D8: what Iterate would do of the next preparation, disclosed before it.
+  return { ...head, iterations: rows.map((r) => summaryOf(r, db)), next_iterate: { preparation: nextIteratePreparation(db, args.project) } };
 }
 
 const addKnown = (a: number | null, b: number | null): number | null => (b === null ? a : a === null ? b : a + b);
@@ -879,6 +886,10 @@ export function readIteration(db: Db, args: { project: string; iteration: string
     // who performed it, and every act the engine performed under an
     // authority the owner gave beforehand.
     owner_answers: ownerAnswers(db, it),
+    // D8: what authorized the iteration's preparation: the allowance (its
+    // snapshot: policy revision, provider, model, run token limit, estimated
+    // cost) or the owner's decision; null when not yet authorized.
+    preparation: preparationAuthorityOf(db, it.id),
     owner_acts: ownerActs(db, it),
     delegated_actions: delegatedActionsOf(db, it.project, it.id),
     delegation_rule: DELEGATION_RULE,

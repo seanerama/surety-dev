@@ -48,7 +48,7 @@ import { SPEC_AREAS_LABEL, SPEC_HEADER_FIELDS, SPEC_SECTIONS, type SemanticFindi
 import { INDEX_COLUMNS } from '../checks/requirement-index.js';
 import { KIND_INVENTORY } from '../checks/scope.js';
 import { type KindSpec, type Subject, consumed, raiseQuestion, recordApproval } from '../store/transitions/queue.js';
-import { policyRevision, projectPolicy } from '../store/transitions/settings.js';
+import { policyRevision, projectEffective, projectPolicy } from '../store/transitions/settings.js';
 import { requestedModelOf } from '../store/transitions/requested-model.js';
 import { PROVIDER_REFUSAL_NEXT_STEP, UNKNOWN_NEXT_STEP, effectiveAllowanceOf, endProviderHold, providerHoldOf, providerRefusalReason, unresolvedAccounting } from '../store/transitions/prototype.js';
 import type { Tx } from '../store/transitions/tx.js';
@@ -220,10 +220,180 @@ function preparationPending(db: Db, iteration: string): string | null {
   const row = db
     .prepare(
       `SELECT w."id" FROM "work_items" w WHERE w."kind" = 'brief_preparation' AND w."status" NOT IN ('complete', 'cancelled', 'parked')
-         AND json_extract(w."subject", '$.decision') IN (SELECT d."id" FROM "decisions" d WHERE d."kind" = 'prototype_preparation_approval' AND d."subject_id" = ?) LIMIT 1`,
+         AND (json_extract(w."subject", '$.decision') IN (SELECT d."id" FROM "decisions" d WHERE d."kind" = 'prototype_preparation_approval' AND d."subject_id" = ?)
+           OR (w."trigger_source" = 'prototype_preparation' AND w."trigger_id" = 'allowance:' || ?)) LIMIT 1`,
     )
-    .get(iteration) as { id: string } | undefined;
+    .get(iteration, iteration) as { id: string } | undefined;
   return row?.id ?? null;
+}
+
+// D8: the trigger of a preparation the allowance authorized names its
+// iteration (`allowance:<iteration>`; a work item's subject keys are D1
+// A.3's closed list, so the subject says only its cause).
+export const ALLOWANCE_CAUSE = 'preparation_allowance';
+const ALLOWANCE_TRIGGER = 'allowance:';
+export function allowanceIterationOf(db: Db, workItem: string): string | null {
+  const w = db.prepare('SELECT "trigger_source", "trigger_id" FROM "work_items" WHERE "id" = ?').get(workItem) as { trigger_source: string; trigger_id: string } | undefined;
+  return w && w.trigger_source === PREPARATION_SOURCE && w.trigger_id.startsWith(ALLOWANCE_TRIGGER) ? w.trigger_id.slice(ALLOWANCE_TRIGGER.length) : null;
+}
+
+// The iteration a brief preparation's work item prepares: by the decision
+// that authorized it, or (D8) by the allowance's trigger.
+function preparationIterationOf(db: Db, item: { id: string; subject: string }): IterationLite | undefined {
+  const byAllowance = allowanceIterationOf(db, item.id);
+  if (byAllowance !== null) return iterationById(db, byAllowance);
+  const s = JSON.parse(item.subject) as { decision?: string };
+  if (typeof s.decision !== 'string') return undefined;
+  return db.prepare(`SELECT p.* FROM "prototype_iterations" p JOIN "decisions" d ON d."subject_id" = p."id" WHERE d."id" = ?`).get(s.decision) as IterationLite | undefined;
+}
+
+// ---- D8: the preparation allowance (DECISIONS item 57) -------------------------------------
+
+// The owner's ruling D8 of 2026-11-26: "Let me authorize one bounded
+// preparation run per iteration, with the model and limits visible and the
+// allowance revocable. Starting an iteration should disclose that it uses
+// this allowance. If the allowance is absent, exhausted, or would be
+// exceeded, ask first." Whether the project's allowance covers the
+// iteration's preparation now: granted (`per_iteration`), its model the one
+// the Spec Writer requests (provider and model), the run's effective token
+// limit and its estimated cost within its limits (a paid run whose cost
+// cannot be estimated is not within), the role's backend resolved, and no
+// preparation of the iteration made under it yet (one per iteration).
+// `why` names what it does not cover; null when the allowance is off.
+export interface AllowanceVerdict {
+  covered: boolean;
+  why: string | null;
+  snapshot: { by: 'allowance'; policy_revision: number | null; policy_revision_id: string | null; provider: string | null; model: string | null; run_token_limit: number | null; estimated_usd: number | null; limits: { run_tokens: number | null; usd_estimated: number | null }; paid: boolean | null } | null;
+}
+
+export function preparationAllowance(db: Db, iteration: string): AllowanceVerdict {
+  const it = iterationById(db, iteration);
+  if (!it) return { covered: false, why: null, snapshot: null };
+  const policy = projectEffective(db, it.project);
+  if (policy.prototype_preparation_allowance !== 'per_iteration') return { covered: false, why: null, snapshot: null };
+  const named = typeof policy.prototype_preparation_model === 'string' ? policy.prototype_preparation_model : null;
+  const at = named === null ? -1 : named.indexOf('/');
+  const provider = at > 0 ? named!.slice(0, at) : null;
+  const model = at > 0 ? named!.slice(at + 1) : null;
+  const m = preparationManifest(db, iteration);
+  const runTokens = typeof policy.prototype_preparation_run_tokens === 'number' ? policy.prototype_preparation_run_tokens : null;
+  const usdCap = typeof policy.prototype_preparation_usd_estimated === 'number' ? policy.prototype_preparation_usd_estimated : null;
+  const snapshot = {
+    by: 'allowance' as const,
+    policy_revision: policyRevision(db, it.project),
+    policy_revision_id: policyRevisionIdOf(db, it.project),
+    provider: typeof m.provider === 'string' ? m.provider : null,
+    model: typeof m.model === 'string' ? m.model : null,
+    run_token_limit: typeof m.run_token_limit === 'number' ? m.run_token_limit : null,
+    estimated_usd: typeof m.estimated_usd === 'number' ? m.estimated_usd : null,
+    limits: { run_tokens: runTokens, usd_estimated: usdCap },
+    paid: typeof m.paid === 'boolean' ? m.paid : null,
+  };
+  const not = (why: string): AllowanceVerdict => ({ covered: false, why, snapshot });
+  if (provider === null || model === null) return not('the allowance names no model (prototype_preparation_model)');
+  if (m.provider !== provider || m.model !== model) return not(`the ${PREPARATION_ROLE} role requests ${String(m.provider)}/${String(m.model)}, and the allowance authorizes ${provider}/${model} only`);
+  if (m.resolution === 'refused') return not(`the ${PREPARATION_ROLE} role's backend is refused now`);
+  const used = db
+    .prepare(`SELECT w."id" FROM "work_items" w WHERE w."kind" = 'brief_preparation' AND w."trigger_source" = ? AND w."trigger_id" = ? LIMIT 1`)
+    .get(PREPARATION_SOURCE, `${ALLOWANCE_TRIGGER}${it.id}`) as { id: string } | undefined;
+  if (used) return not(`the allowance's one preparation of iteration ${it.seq} was already made (work item ${used.id})`);
+  if (runTokens === null || snapshot.run_token_limit === null || snapshot.run_token_limit > runTokens) return not(`the run's token limit (${String(snapshot.run_token_limit)}) exceeds the allowance's ${String(runTokens)} (prototype_preparation_run_tokens)`);
+  if (m.paid === true && (snapshot.estimated_usd === null || usdCap === null)) return not(`the run's cost cannot be estimated (${String(m.estimate_basis)}), so it cannot be shown within the allowance's estimated ${usd(usdCap)}`);
+  if (m.paid === true && snapshot.estimated_usd! > usdCap!) return not(`the run's estimated cost (${usd(snapshot.estimated_usd)}) exceeds the allowance's ${usd(usdCap)} (prototype_preparation_usd_estimated)`);
+  return { covered: true, why: null, snapshot };
+}
+
+// At an iteration's creation (store/transitions/prototype.ts createIteration):
+// the preparation authorized by the allowance when it covers it, its work
+// created at once, no decision; the iteration records the allowance's
+// snapshot, and the act is a delegated action. null when it does not cover
+// it (the owner is then asked, the question naming why).
+export function prepareByAllowance(tx: Tx, args: { project: string; iteration: string }): { work_item: string; preparation: NonNullable<AllowanceVerdict['snapshot']> } | null {
+  const v = preparationAllowance(tx.db, args.iteration);
+  if (!v.covered || v.snapshot === null) return null;
+  const it = iterationById(tx.db, args.iteration)!;
+  const s = v.snapshot;
+  const work = observeTrigger(
+    tx,
+    {
+      project: args.project,
+      kind: PREPARATION_WORK,
+      trigger_source: PREPARATION_SOURCE,
+      trigger_id: `${ALLOWANCE_TRIGGER}${it.id}`,
+      trigger_generation: 1,
+      subject: { cause: ALLOWANCE_CAUSE },
+      chain: 0,
+    },
+    { iteration: it.id, allowance: s.policy_revision_id },
+  ).work_item.id;
+  tx.db.prepare(`UPDATE "prototype_iterations" SET "preparation_authority" = 'allowance', "preparation_allowance" = ? WHERE "id" = ?`).run(JSON.stringify(s), it.id);
+  recordDelegatedAction(tx, {
+    project: args.project,
+    iteration: it.id,
+    kind: 'preparation_by_allowance',
+    subject_type: 'work_item',
+    subject_id: work,
+    authorized_by_kind: 'allowance',
+    authorized_by: s.policy_revision_id,
+    performed_by: 'policy:preparation_allowance',
+    scope: { runs: 1, run_token_limit: s.run_token_limit, estimated_usd: s.estimated_usd, limits: s.limits, provider: s.provider, model: s.model },
+    basis: { iteration_seq: it.seq, paid: s.paid },
+  });
+  tx.emit('prototype.preparation_authorized', { project: args.project, iteration: it.id }, { by: 'allowance', policy_revision: s.policy_revision, policy_revision_id: s.policy_revision_id, work_item: work, role: PREPARATION_ROLE, provider: s.provider, model: s.model, run_token_limit: s.run_token_limit, estimated_usd: s.estimated_usd, paid: s.paid });
+  return { work_item: work, preparation: s };
+}
+
+// D8: what an Iterate now would do of the next iteration's preparation (GET
+// …/iterations' next_iterate, so that the owner sees it before the click):
+// under the allowance (its model, run token limit and estimated cost), or
+// asked (and why). The next iteration's run would be given the lower of the
+// per-run limit and the iteration token allowance (nothing is used yet).
+export function nextIteratePreparation(db: Db, project: string): Record<string, unknown> {
+  const policy = projectEffective(db, project);
+  if (policy.prototype_preparation_allowance !== 'per_iteration') return { by: 'owner', allowance: 'off', why: 'the preparation allowance is not granted: Iterate asks you to authorize the preparation run' };
+  const named = typeof policy.prototype_preparation_model === 'string' ? policy.prototype_preparation_model : null;
+  const rm = requestedModelOf(db, project, PREPARATION_ROLE);
+  const limit = Math.min(policy.budget_run_billable_tokens as number, policy.prototype_budget_tokens as number);
+  const paid = rm.provider !== 'scripted';
+  const est = paid ? attemptSpendEstimate(rm.provider, rm.model, limit, 1) : null;
+  const usdCap = policy.prototype_preparation_usd_estimated as number;
+  const base = { allowance: 'per_iteration', policy_revision: policyRevision(db, project), provider: rm.provider, model: rm.model, allowance_model: named, run_token_limit: limit, estimated_usd: est?.usd ?? null, limits: { run_tokens: policy.prototype_preparation_run_tokens, usd_estimated: usdCap } };
+  const why =
+    named === null
+      ? 'the allowance names no model (prototype_preparation_model)'
+      : named !== `${rm.provider}/${rm.model}`
+        ? `the ${PREPARATION_ROLE} role requests ${rm.provider}/${rm.model}, and the allowance authorizes ${named} only`
+        : rm.resolution === 'refused'
+          ? `the ${PREPARATION_ROLE} role's backend is refused now`
+          : limit > (policy.prototype_preparation_run_tokens as number)
+            ? `the run's token limit (${limit}) exceeds the allowance's ${String(policy.prototype_preparation_run_tokens)}`
+            : paid && est === null
+              ? "the run's cost cannot be estimated"
+              : paid && est!.usd > usdCap
+                ? `the run's estimated cost (${usd(est!.usd)}) exceeds the allowance's ${usd(usdCap)}`
+                : null;
+  return why === null ? { by: 'allowance', ...base, discloses: `Iterate uses the preparation allowance: one ${roleDisplayName(PREPARATION_ROLE)} run requesting ${rm.provider}/${rm.model}, up to ${limit} billable tokens${paid ? ` (estimated ${usd(est!.usd)} at most, not a cap)` : ' (the scripted provider is unpaid)'}, dispatched without asking you.` } : { by: 'owner', ...base, why };
+}
+
+const policyRevisionIdOf = (db: Db, project: string): string | null =>
+  (db.prepare('SELECT "policy_revision" FROM "projects" WHERE "id" = ?').get(project) as { policy_revision: string | null } | undefined)?.policy_revision ?? null;
+
+// What the iteration's preparation was authorized by, as recorded (the
+// iteration read, the Iterate answer): the allowance's snapshot, the
+// owner's decision, or null when not yet authorized (or recorded before
+// migration 0053).
+export function preparationAuthorityOf(db: Db, iteration: string): Record<string, unknown> | null {
+  const row = db.prepare('SELECT "preparation_authority", "preparation_allowance" FROM "prototype_iterations" WHERE "id" = ?').get(iteration) as { preparation_authority: string | null; preparation_allowance: string | null } | undefined;
+  if (!row || row.preparation_authority === null) return null;
+  if (row.preparation_authority === 'allowance') {
+    try {
+      return JSON.parse(row.preparation_allowance ?? 'null') as Record<string, unknown>;
+    } catch {
+      return { by: 'allowance', policy_revision: null };
+    }
+  }
+  const d = db.prepare(`SELECT "id" FROM "decisions" WHERE "kind" = 'prototype_preparation_approval' AND "subject_id" = ? AND "status" = 'consumed' AND json_extract("answer", '$.option') = 'approve' ORDER BY "seq" DESC LIMIT 1`).get(iteration) as { id: string } | undefined;
+  return { by: 'owner', decision: d?.id ?? null };
 }
 
 export function preparationManifest(db: Db, iteration: string): Record<string, unknown> {
@@ -309,6 +479,10 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
         ? ''
         : ` You are asked again: your approval (decision ${prior.decision}) authorized a run requesting model ${prior.model}, but the ${PREPARATION_ROLE} role now requests model ${String(m.model)}, so no run was dispatched under it.`;
     const refused = m.resolution === 'refused' ? ` The ${PREPARATION_ROLE} role's backend is refused now (${requestedModelOf(tx.db, it.project, PREPARATION_ROLE).refusal ?? 'unconfigured'}): the run is dispatched only once it resolves.` : '';
+    // D8: the project's preparation allowance is granted but does not cover
+    // this run: why, said here.
+    const allowance = preparationAllowance(tx.db, it.id);
+    const notCovered = allowance.why === null ? '' : ` You are asked because the preparation allowance does not cover this run: ${allowance.why}.`;
     const perRun = projectPolicy(tx.db, it.project).budget_run_billable_tokens!;
     const limitText =
       m.run_token_limit === perRun
@@ -331,7 +505,8 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
       manifest: m,
       // Composed only when the decision is raised or re-raised: a decision
       // already open or consumed keeps the question it recorded.
-      question: `Approve one ${role} run to prepare the prototype brief? (prototype iteration ${it.seq})${labelled}${refused}${why}${continues} The run reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval. ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.`,
+      question: `Approve one ${role} run to prepare the prototype brief? (prototype iteration ${it.seq})${labelled}${refused}${notCovered}${why}${continues} The run reads the idea (.surety/idea.md, version ${String(m.idea_version)}) and writes the brief and the minimal specification for your approval. ${cost} Its usage is counted in the prototype's totals as its own subtotal (brief preparation). Approving authorizes exactly one preparation run; it approves neither the brief nor the build.`,
+      ...(allowance.why === null ? {} : { evidence: { allowance_not_covering: allowance.why, allowance: allowance.snapshot } }),
       options: [
         {
           key: 'approve',
@@ -357,6 +532,7 @@ export const PROTOTYPE_PREPARATION_APPROVAL: KindSpec = {
     }
     const m = preparationManifest(tx.db, it.id);
     recordApproval(tx, d, { consequence: `one brief preparation run of iteration ${it.seq} authorized`, subjectType: 'prototype_iteration', subjectId: it.id });
+    tx.db.prepare(`UPDATE "prototype_iterations" SET "preparation_authority" = 'owner' WHERE "id" = ?`).run(it.id);
     const work = observeTrigger(tx, { project: it.project, kind: PREPARATION_WORK, trigger_source: PREPARATION_SOURCE, trigger_id: d.id, trigger_generation: 1, subject: { decision: d.id }, chain: 0 }, { iteration: it.id, decision: d.id }).work_item.id;
     setStatus(tx, it, it.status, 'wait: the brief is being prepared');
     tx.emit('prototype.preparation_authorized', { project: it.project, iteration: it.id }, { decision: d.id, work_item: work, role: m.role, provider: m.provider, model: m.model, run_token_limit: m.run_token_limit, estimated_usd: m.estimated_usd, paid: m.paid });
@@ -419,7 +595,29 @@ function modelChangedApproval(db: Db, iteration: string, model: string): { decis
 // requested model is raised; nothing runs until it is answered. Returns
 // whether the dispatch was refused so.
 export function preparationModelMismatch(tx: Tx, item: WorkRow, requested: string): boolean {
-  const decision = (JSON.parse(item.subject) as { decision?: string }).decision ?? null;
+  const subject = JSON.parse(item.subject) as { decision?: string };
+  // D8: a preparation under the allowance is dispatched only while the role
+  // requests the model the allowance authorized (its snapshot on the
+  // iteration); otherwise no run, the work cancelled, and the owner asked.
+  const allowanceOf = allowanceIterationOf(tx.db, item.id);
+  if (allowanceOf !== null) {
+    const it = iterationById(tx.db, allowanceOf);
+    const snap = (() => {
+      try {
+        return JSON.parse((tx.db.prepare('SELECT "preparation_allowance" FROM "prototype_iterations" WHERE "id" = ?').get(allowanceOf) as { preparation_allowance: string | null } | undefined)?.preparation_allowance ?? 'null') as { model?: string | null; policy_revision_id?: string | null } | null;
+      } catch {
+        return null;
+      }
+    })();
+    if (snap?.model === requested) return false;
+    const why = `the ${PREPARATION_ROLE} role now requests model ${requested}, but the preparation allowance authorized a run requesting model ${String(snap?.model ?? 'unknown')}: no run was dispatched under it, and your approval is asked`;
+    transitionWork(tx, item, 'cancelled', {}, { cause: 'requested_model_changed', allowance: snap?.policy_revision_id ?? null, approved_model: snap?.model ?? null, requested_model: requested, reason: why });
+    if (!it) return true;
+    if (it.status === 'preparing') setStatus(tx, it, 'preparing', 'approve preparation or discard', { reason: why });
+    raisePreparation(tx, { project: it.project, iteration: it.id });
+    return true;
+  }
+  const decision = subject.decision ?? null;
   if (decision === null) return false;
   const approved = approvedModelOf(tx.db, decision);
   if (approved === null || approved === requested) return false;
@@ -497,8 +695,7 @@ export function requestPreparation(tx: Tx, args: { project: string; iteration: s
 // or discard". A brief that was awaiting approval is left as it was.
 export function preparationEnded(tx: Tx, item: WorkRow, run: { id: string; outcome: string | null; reason_class: string | null; reason_text?: string | null }): void {
   transitionWork(tx, item, 'cancelled', {}, { run: run.id, outcome: run.outcome, cause: 'preparation_failed' });
-  const decision = (JSON.parse(item.subject) as { decision?: string }).decision ?? null;
-  const it = decision === null ? undefined : (tx.db.prepare(`SELECT p.* FROM "prototype_iterations" p JOIN "decisions" d ON d."subject_id" = p."id" WHERE d."id" = ?`).get(decision) as IterationLite | undefined);
+  const it = preparationIterationOf(tx.db, item);
   if (!it) return;
   const why = `the brief preparation run ${run.id} ended ${run.outcome ?? 'unknown'}${run.reason_class && run.reason_class !== 'none' ? ` (${run.reason_class})` : ''}${run.reason_text ? `: ${run.reason_text}` : ''}`;
   if (it.status === 'preparing') setStatus(tx, it, 'preparing', 'prepare again or discard', { reason: why });
@@ -672,7 +869,7 @@ export function briefFacts(db: Db, args: { project: string; run: string; environ
   // The preparation: the authorization, the preparation runs so far (this
   // one under way: its usage is not settled, so tokens and cost are not
   // known yet; the iteration read serves the settled subtotal).
-  const run = db.prepare('SELECT r."iteration", w."subject" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ?').get(args.run) as { iteration: string | null; subject: string } | undefined;
+  const run = db.prepare('SELECT r."iteration", w."subject", w."id" AS "work_item", w."created_at" AS "work_created_at" FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."id" = ?').get(args.run) as { iteration: string | null; subject: string; work_item: string; work_created_at: string } | undefined;
   let preparation: BriefFacts['preparation'] = null;
   if (run) {
     const decision = (JSON.parse(run.subject) as { decision?: string }).decision ?? null;
@@ -680,9 +877,10 @@ export function briefFacts(db: Db, args: { project: string; run: string; environ
     const runs = run.iteration === null ? 1 : (db.prepare(`SELECT COUNT(*) AS n FROM "runs" r JOIN "work_items" w ON w."id" = r."work_item" WHERE r."iteration" = ? AND w."kind" = 'brief_preparation'`).get(run.iteration) as { n: number }).n;
     // D8: a preparation under the allowance names the allowance's policy
     // revision; otherwise the decision that authorized it.
-    const allowance = (JSON.parse(run.subject) as { allowance?: string }).allowance ?? null;
-    const by = allowance !== null ? { kind: 'allowance' as const, id: allowance } : { kind: 'decision' as const, id: decision };
-    const authorizedAt = allowance !== null ? ((db.prepare('SELECT "created_at" FROM "work_items" WHERE "id" = (SELECT "work_item" FROM "runs" WHERE "id" = ?)').get(args.run) as { created_at: string } | undefined)?.created_at ?? null) : at;
+    const allowanceIt = allowanceIterationOf(db, run.work_item);
+    const allowance = allowanceIt === null ? null : (preparationAuthorityOf(db, allowanceIt)?.policy_revision_id as string | null | undefined) ?? null;
+    const by = allowanceIt !== null ? { kind: 'allowance' as const, id: allowance } : { kind: 'decision' as const, id: decision };
+    const authorizedAt = allowanceIt !== null ? run.work_created_at : at;
     preparation = {
       authorized_at: authorizedAt,
       runs,
@@ -1227,8 +1425,7 @@ export interface BriefPreparationFacts {
 }
 
 export function briefPreparationFacts(db: Db, item: { id: string; project: string; subject: string }): BriefPreparationFacts | null {
-  const decision = (JSON.parse(item.subject) as { decision?: string }).decision ?? null;
-  const it = decision === null ? undefined : (db.prepare(`SELECT p.* FROM "prototype_iterations" p JOIN "decisions" d ON d."subject_id" = p."id" WHERE d."id" = ?`).get(decision) as IterationLite | undefined);
+  const it = preparationIterationOf(db, item);
   if (!it) return null;
   const p = db.prepare('SELECT "idea_version" FROM "projects" WHERE "id" = ?').get(item.project) as { idea_version: number | null };
   const prev = db

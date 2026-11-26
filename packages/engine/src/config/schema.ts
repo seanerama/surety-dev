@@ -514,6 +514,8 @@ export const PROJECT_OPTIONS: Record<string, OptionSpec> = {
   // widening (a policy_widening decision shows the model and the limits);
   // changing the model while granted is a widening; revoking is not.
   prototype_preparation_allowance: { type: 'enum', values: PREPARATION_ALLOWANCES, default: 'off', widening: 'later' },
+  // Default null, served as null in the effective policy: no model is
+  // authorized under the allowance until the owner names one.
   prototype_preparation_model: { type: 'provider_model', values: REAL_BACKEND_NAMES, default: null, widening: 'changed_while_allowed' },
 };
 

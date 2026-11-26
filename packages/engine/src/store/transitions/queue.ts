@@ -1174,8 +1174,18 @@ export function widenPreview(tx: Tx, project: string, change: Policy): Preview |
       { key: 'approve', label: 'Approve', consequence: `The policy is committed with ${widens.join(', ')} raised.`, effect: { change, policy: sorted } },
       { key: 'reject', label: 'Reject', consequence: 'Nothing is changed.', effect: { change } },
     ],
-    question: `The policy change widens what the engine may do unasked (${widens.join(', ')}). Approve it to commit it.`,
+    question: `The policy change widens what the engine may do unasked (${widens.join(', ')}). Approve it to commit it.${allowanceText(widens, sorted)}`,
   };
+}
+
+// D8 (DECISIONS item 57): a widening that grants or widens the preparation
+// allowance states its model and limits.
+const ALLOWANCE_KEYS = ['prototype_preparation_allowance', 'prototype_preparation_model', 'prototype_preparation_run_tokens', 'prototype_preparation_usd_estimated'];
+function allowanceText(widens: string[], proposed: Record<string, unknown>): string {
+  if (!widens.some((k) => ALLOWANCE_KEYS.includes(k)) || proposed.prototype_preparation_allowance !== 'per_iteration') return '';
+  const model = typeof proposed.prototype_preparation_model === 'string' ? proposed.prototype_preparation_model : 'none named (no run is authorized until one is)';
+  const usd = typeof proposed.prototype_preparation_usd_estimated === 'number' ? `$${proposed.prototype_preparation_usd_estimated.toFixed(2)}` : 'unknown';
+  return ` The preparation allowance authorizes one Spec Writer brief preparation run per iteration without asking you: model ${model}, at most ${String(proposed.prototype_preparation_run_tokens)} billable tokens for the run, an estimated ${usd} at most at the price table (an estimate, not a cap). Each Iterate says when it uses it; a run outside it is asked of you. Revoke it by setting prototype_preparation_allowance to off.`;
 }
 
 const changeOf = (d: Subject): Policy =>

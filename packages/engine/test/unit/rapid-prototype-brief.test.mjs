@@ -778,3 +778,63 @@ test('D7: the API takes the delegation off the body, validated; absent, the act 
   }
   assert.throws(() => takeDelegation({ delegation: { performed_by: 'agent', agent: 'x', on_behalf: 'y' } }), (e) => e.code === 'unknown_field');
 });
+
+// ---- DECISIONS item 57, D8: the opt-in preparation allowance ----
+
+const { createIteration, limitsOf } = await import(join(dist, 'store', 'transitions', 'prototype.js'));
+const { listIterations } = await import(join(dist, 'prototype', 'iterations.js'));
+const { projectEffective: projectEffectiveOf } = await import(join(dist, 'store', 'transitions', 'settings.js'));
+const setPolicy = (db, project, change) => {
+  const row = db.prepare('SELECT r.id, r.effective FROM projects p JOIN policy_revisions r ON r.id = p.policy_revision WHERE p.id = ?').get(project);
+  db.prepare('UPDATE policy_revisions SET effective = ? WHERE id = ?').run(JSON.stringify({ ...JSON.parse(row.effective), ...change }), row.id);
+};
+
+test('D8: under the allowance a new iteration\'s preparation is created at once, no decision, recorded and disclosed; another model, or the allowance spent, asks with why', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create();
+  // Off: asked as before; next_iterate says so.
+  assert.equal(listIterations(db, { project: p.id }).next_iterate.preparation.by, 'owner');
+  setPolicy(db, p.id, { prototype_preparation_allowance: 'per_iteration', prototype_preparation_model: 'scripted/opus' });
+  const next = listIterations(db, { project: p.id }).next_iterate.preparation;
+  assert.deepEqual([next.by, next.provider, next.model], ['allowance', 'scripted', 'opus']);
+  assert.match(next.discloses, /^Iterate uses the preparation allowance: one Spec Writer run requesting scripted\/opus/);
+  const it2 = transact(db, ENGINE_ACTOR, (tx) => createIteration(tx, { project: p.id, limits: limitsOf(projectEffectiveOf(db, p.id)) }));
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM decisions WHERE kind = 'prototype_preparation_approval' AND subject_id = ?`).get(it2).n, 0, 'no decision');
+  const [w] = db.prepare(`SELECT * FROM work_items WHERE kind = 'brief_preparation' AND trigger_id = ?`).all(`allowance:${it2}`);
+  assert.ok(w, 'the preparation work, at once');
+  assert.deepEqual(JSON.parse(w.subject), { cause: 'preparation_allowance' });
+  const row = iteration(db, it2);
+  assert.deepEqual([row.preparation_authority, row.next_step], ['allowance', 'wait: the brief is being prepared']);
+  const read = readIteration(db, { project: p.id, iteration: it2 });
+  assert.deepEqual([read.preparation.by, read.preparation.provider, read.preparation.model, read.preparation.paid], ['allowance', 'scripted', 'opus', false]);
+  assert.equal(read.preparation.limits.run_tokens, 1_500_000);
+  const [act] = read.delegated_actions;
+  assert.deepEqual([act.kind, act.authorized_by.kind, act.performed_by, act.subject.id], ['preparation_by_allowance', 'allowance', 'policy:preparation_allowance', w.id]);
+  // Spent for this iteration: asked again with why.
+  assert.match(B.preparationAllowance(db, it2).why, /one preparation of iteration 2 was already made/);
+  // The Spec Writer requests another model than the allowance's: asked, saying why.
+  setPolicy(db, p.id, { prototype_preparation_model: 'scripted/sonnet' });
+  const it3 = transact(db, ENGINE_ACTOR, (tx) => createIteration(tx, { project: p.id, limits: limitsOf(projectEffectiveOf(db, p.id)) }));
+  const [d] = decisionsOf(db, p.id, 'prototype_preparation_approval').filter((x) => x.subject_id === it3);
+  assert.ok(d, 'asked');
+  assert.match(d.question, /the preparation allowance does not cover this run: the spec_writer role requests scripted\/opus, and the allowance authorizes scripted\/sonnet only/);
+  assert.equal(JSON.parse(d.evidence).allowance_not_covering !== undefined, true);
+  assert.equal(readIteration(db, { project: p.id, iteration: it3 }).preparation, null, 'not yet authorized');
+  // Revoked: off, asked as before, no reason given about an allowance.
+  setPolicy(db, p.id, { prototype_preparation_allowance: 'off' });
+  assert.equal(B.preparationAllowance(db, it3).why, null);
+});
+
+test('D8: a preparation under the allowance whose model the role no longer requests at dispatch is cancelled with no run, and the owner asked', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create();
+  setPolicy(db, p.id, { prototype_preparation_allowance: 'per_iteration', prototype_preparation_model: 'scripted/opus' });
+  const it2 = transact(db, ENGINE_ACTOR, (tx) => createIteration(tx, { project: p.id, limits: limitsOf(projectEffectiveOf(db, p.id)) }));
+  const w = db.prepare(`SELECT * FROM work_items WHERE trigger_id = ?`).get(`allowance:${it2}`);
+  setPolicy(db, p.id, { model_spec_writer: 'sonnet' });
+  const c = transact(db, ENGINE_ACTOR, (tx) => R.claimDispatch(tx, { project: p.id, workItem: w.id, incarnation: 'inc_1', scripted: 'scripted-1' }));
+  assert.equal(c, null, 'no run');
+  assert.equal(getWorkItem({ db }, w.id)?.status ?? db.prepare('SELECT status FROM work_items WHERE id = ?').get(w.id).status, 'cancelled');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM runs WHERE work_item = ?').get(w.id).n, 0);
+  assert.ok(decisionsOf(db, p.id, 'prototype_preparation_approval').some((x) => x.subject_id === it2 && x.status === 'open'), 'the owner is asked');
+});

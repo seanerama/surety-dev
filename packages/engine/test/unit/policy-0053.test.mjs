@@ -11,10 +11,10 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const { validatePolicySubmission, wideningKeys, projectEffectiveDefaults } = await import(join(root, 'dist', 'config', 'project-policy.js'));
 
-test('the allowance is off by default; its model has no default; its limits default to the per-run limit and the iteration estimate', () => {
+test('the allowance is off by default; its model is null until named; its limits default to the per-run limit and the iteration estimate', () => {
   const d = projectEffectiveDefaults();
   assert.equal(d.prototype_preparation_allowance, 'off');
-  assert.equal('prototype_preparation_model' in d, false, 'a key with no default is absent, never filled in');
+  assert.equal(d.prototype_preparation_model, null, 'served as an explicit null, never filled in');
   assert.equal(d.prototype_preparation_run_tokens, 1_500_000);
   assert.equal(d.prototype_preparation_usd_estimated, 15);
 });

@@ -11,7 +11,7 @@ import type { Policy } from '../../config/project-policy.js';
 import { type LedgerRow, type ProviderRefusal, billable, fold, observedSoFar, outstandingReservation, providerRefusalOf, runBudgetOf } from './ledger.js';
 import { projectPolicy } from './settings.js';
 import type { Tx } from './tx.js';
-import { raisePreparation } from '../../prototype/brief.js';
+import { prepareByAllowance, raisePreparation } from '../../prototype/brief.js';
 import { Refusal } from '../../refusal.js';
 import { resumeWork } from './work.js';
 
@@ -53,15 +53,20 @@ export function createIteration(tx: Tx, args: { project: string; limits: Record<
     )
     .run(id, tx.at, args.project, n, args.predecessor ?? null, JSON.stringify(args.limits), args.change ?? null);
   tx.emit('prototype.iteration_created', { project: args.project, iteration: id }, { seq: n, predecessor: args.predecessor ?? null, limits: args.limits, ...(args.predecessor ? { change: args.change ?? null } : {}) });
-  // Slice E3 (R5): the owner is asked at once to authorize the one run that
-  // prepares the iteration's brief; nothing is dispatched before the answer.
-  const asked = raisePreparation(tx, { project: args.project, iteration: id });
+  // D8 (DECISIONS item 57): the project's preparation allowance, when it
+  // covers the run, authorizes it now: its work created, no decision.
+  const byAllowance = prepareByAllowance(tx, { project: args.project, iteration: id });
+  // Slice E3 (R5): otherwise the owner is asked at once to authorize the one
+  // run that prepares the iteration's brief; nothing is dispatched before
+  // the answer (the question names why the allowance, if granted, does not
+  // cover it).
+  const asked = byAllowance === null ? raisePreparation(tx, { project: args.project, iteration: id }) : null;
   // An Iterate on a project paused (by a Stop of the predecessor): nothing
   // is dispatched until the owner resumes it, and the next step says so. (A
   // new prototype is created unpaused by the new-app route, slice E5's S1:
   // its first iteration's question is all there is until it is answered.)
   const paused = !!args.predecessor && (tx.db.prepare('SELECT "paused" FROM "projects" WHERE "id" = ?').get(args.project) as { paused: number } | undefined)?.paused === 1;
-  const next = asked ? 'approve preparation or discard' : 'request preparation or discard';
+  const next = byAllowance !== null ? 'wait: the brief is being prepared' : asked ? 'approve preparation or discard' : 'request preparation or discard';
   tx.db.prepare('UPDATE "prototype_iterations" SET "next_step" = ? WHERE "id" = ?').run(paused ? `resume the project (it is paused), then ${next}` : next, id);
   return id;
 }

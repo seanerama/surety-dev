@@ -44,7 +44,14 @@ export function projectPolicyDefaults(): Record<string, number> {
 // unconfigured, and nothing stands in for it.
 export function projectEffectiveDefaults(): Policy {
   const out: Policy = { ...projectPolicyDefaults() };
-  for (const [key, spec] of Object.entries(projectOptionSpecs())) if (spec.default !== null) out[key] = structuredClone(spec.default) as PolicyValue;
+  for (const [key, spec] of Object.entries(projectOptionSpecs())) {
+    if (spec.default !== null) out[key] = structuredClone(spec.default) as PolicyValue;
+    // D8 (DECISIONS item 57; objection 234's resolution): the preparation
+    // allowance's model is served as an explicit null while the owner has
+    // named none (no run is authorized under the allowance until one is),
+    // never filled in.
+    else if (spec.type === 'provider_model') out[key] = null as unknown as PolicyValue;
+  }
   return out;
 }
 
