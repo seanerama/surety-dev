@@ -22,8 +22,11 @@
 //     `protected.approved` names the authority and the brief decision; the
 //     proposal's diff stays readable; the next candidate is nominated at the
 //     new version and its verification retained;
-// (b) the same for a tightening of an existing check (accept-r1 also covers
-//     R4.1: an added assertion as the classifier sees it, criteria_added);
+// (b) the same for coverage of a criterion of the brief tightened by a
+//     check added beside the existing one (accept-r1-order covering R1.1,
+//     the same approved command, its own new scenario file: the
+//     classifier's check_added), as amended for objection 236 (option 1;
+//     driver/item57-rulings-rows 8e36459e);
 // (c) a check added for a criterion outside the brief's spec revision
 //     (R9.1); (d) check_commands changed (what can execute); (e) a loosening
 //     (accept-r3 removed) and an unclassifiable proposal (accept-r1's
@@ -116,7 +119,8 @@ const CORRECTION_KINDS = CHECK_KINDS;
 const R4 = narrowInputs(CHECK_FILE_R4);
 const TREES = {
   a: { ...FILES, ...R4 },
-  b: { ...FILES, [R1]: json({ ...parse(R1), covers: { criteria: ['R1.1', 'R4.1'] } }) },
+  // (b) beside accept-r1, a check of its own for R1.1: the same approved command, a new scenario file (objection 236, option 1).
+  b: { ...FILES, '.surety/checks/defs/accept-r1-order.json': json({ ...parse(R1), key: 'accept-r1-order', inputs: ['.surety/checks/run/r1-order.mjs'] }), '.surety/checks/run/r1-order.mjs': "export const expect = 'the added task is listed last';\n" },
   c: { ...FILES, ...R4, '.surety/checks/defs/accept-r9.json': json({ ...parse(R1), key: 'accept-r9', covers: { criteria: ['R9.1'] } }) },
   d: { ...FILES, ...R4, [POLICY]: json({ ...parse(POLICY), check_commands: { ...parse(POLICY).check_commands, probe2: { path: '/usr/bin/env' } } }) },
   loosening: { ...Object.fromEntries(Object.entries(FILES).filter(([k]) => k !== R3)), ...R4 },
@@ -129,7 +133,7 @@ const TREES = {
 const SCENARIO = '.surety/checks/run/r2.mjs';
 const R2 = '.surety/checks/defs/accept-r2.json';
 const WITH_INPUT = { ...FILES, [R2]: json({ ...parse(R2), inputs: [SCENARIO] }), [SCENARIO]: "export const expect = 'both listed in order';\n" };
-TREES.edited_input = { ...WITH_INPUT, ...R4, [SCENARIO]: "export const expect = 'both listed in order, and the count shown';\n" };
+TREES.edited_input = { ...WITH_INPUT, ...R4, [SCENARIO]: "export const expect = 'both listed in order';\nexport const alsoExpect = 'the count shown';\n" };
 const FIRST = { edited_input: WITH_INPUT };
 const DELETES = { loosening: [R3] };
 const authoringOf = (tree, deletes = []) => ({
@@ -266,7 +270,7 @@ const appliedOrAsked = (fx) => (P) => P.status === 'applied' || decisionsAbout(f
 describe('M636 the brief authorizes its own check tightenings within its criteria', () => {
   for (const [c, label] of [
     ['a', "(a) phase 2's authoring adds accept-r4 for R4.1"],
-    ['b', '(b) an existing check tightened for a criterion of the brief (accept-r1 also covers R4.1)'],
+    ['b', '(b) coverage of R1.1 tightened by a check added beside accept-r1 (same command, a new scenario file)'],
   ]) {
     test(`${label}: applied once by the policy, no question, the brief decision named, the diff readable, the next candidate verified at the new version`, { timeout: 600_000 }, async (t) => {
       const J = await iteration2(t, { name: `M636 ${c}`, port: 18660 + c.charCodeAt(0) - 97, tree: TREES[c] });
@@ -281,7 +285,7 @@ describe('M636 the brief authorizes its own check tightenings within its criteri
     ['d', 'check_correction_unclassifiable', '(d) check_commands changed (what can execute)'],
     ['loosening', 'check_correction_loosening', '(e) a loosening'],
     ['unclassifiable', 'check_correction_unclassifiable', '(e) an unclassifiable proposal'],
-    ['edited_input', 'check_correction_unclassifiable', "(e) an existing check's input file edited"],
+    ['edited_input', 'check_correction_unclassifiable', "(e) an added assertion inside an existing check's input file (input_changed)"],
   ]) {
     test(`${label}: the owner's question as today, its evidence naming why the policy did not cover it`, { timeout: 600_000 }, async (t) => {
       const J = await iteration2(t, { name: `M636 ${c}`, port: 18670 + Object.keys(TREES).indexOf(c), tree: TREES[c], deletes: DELETES[c] ?? [], first: FIRST[c] ?? FILES });

@@ -34,10 +34,15 @@
 //     `resolution_verification` naming that result (low; and separately
 //     high);
 // (b) X passed on C: no fix yet; check-correction work for X to the
-//     Verifier; its tightening applied under M636; the tightened X fails on
-//     C; then (a);
-// (c) the tightened X still passes on C: the owner's `finding_disposition`
-//     question, its evidence saying the repair could not be verified;
+//     Verifier; the correction adds Y = accept-r3y, a required acceptance
+//     check covering K beside X (the same approved command, a new scenario
+//     file), applied under M636; Y fails on C: F's `check` bound to Y with X
+//     kept in its history, then (a) with Y as the verifying check (rows as
+//     amended for objection 236, option 1: driver/item57-rulings-rows
+//     8e36459e);
+// (c) the correction's checks covering K (X and Y) all still pass on C:
+//     the owner's `finding_disposition` question, its evidence saying the
+//     repair could not be verified;
 // (d) the iteration's repair allowance exhausted
 //     (`prototype_repairs_per_iteration` 0): the owner's question naming the
 //     allowance;
@@ -68,18 +73,15 @@
 //   (decisions.evidence) or as served (harness/item57v2.mjs decisionWhy);
 //   for (d) such a reason naming the allowance. Whether the decision read
 //   serves it is reported as a diagnostic.
-// - (b)'s correction edits X itself (the same key, a criterion added, its
-//   inputs unchanged: the classifier's `criteria_added`, a tightening), not
-//   an input file of X (which the classifier calls `input_changed`,
-//   unclassifiable, the owner's: M636 (e)), and not a new check beside X:
-//   the finding names X, and it is X on C that must reproduce it.
+// - (b) "X kept in the finding's check history" is read as an event about
+//   F whose payload names both X and Y, or X named in F's row.
+// - The restart: the project is paused when F is first recorded, so the
+//   disposition is made and no fix dispatched before the restart.
 // - (d)'s "or the run would exceed the iteration's tokens/USD" and (e)'s
 //   "K outside the brief" are not exercised: a finding's criterion must be
 //   one of the registered index's (invoke/choke.ts), and the index is the
 //   brief's own revision; the token/USD variant needs a limit calibrated to
 //   the scripted usage at F's moment, not built here. The report says so.
-// - The restart: taken at the first observation of F dispositioned; the
-//   diagnostic says whether the fix had been dispatched by then.
 //
 // SAFETY (BS6 §4.1; E64): the kernel lane; the scripted role program and
 // the scripted deployment adapter in the test's own home; nothing signalled
@@ -91,10 +93,11 @@ import { describe, test } from 'node:test';
 import { gapItems, gapScript, phase2Plan, restart, runsOn, untilPublished } from './harness/gap57.mjs';
 import { waitFor } from './harness/engine.mjs';
 import { pauseProject, resumeProject, tick } from './harness/runs.mjs';
-import { CHECK_KINDS, alphaReady, answerOpen, authoringScript, iterationRead, kindNext, protoEngine, pump, result, toBrief, usage, workRead, write } from './harness/prototype.mjs';
+import { CHECK_KINDS, alphaReady, answerOpen, authoringScript, idle, iterationRead, kindNext, protoEngine, pump, result, toBrief, usage, workRead, write } from './harness/prototype.mjs';
 import {
   NARROW_FILES,
   decisionsAbout,
+  eventsAbout,
   findingRow,
   narrowGapRefused,
   objectsWhere,
@@ -114,32 +117,35 @@ const X = 'accept-r3x';
 const XPATH = `.surety/checks/defs/${X}.json`;
 const XDEF = { schema: 1, key: X, kind: 'acceptance', command: ['probe'], timeout_s: 60, gate_kinds: ['alpha_authorize'], covers: { criteria: ['R3.1'] }, inputs: [] };
 const FILES = { ...NARROW_FILES, [XPATH]: json(XDEF) };
-const TIGHTENED = { ...FILES, [XPATH]: json({ ...XDEF, covers: { criteria: ['R3.1', 'R2.1'] } }) };
+// (b), (c): the Verifier's correction adds Y beside X, covering K with the same
+// approved command and a new scenario file (objection 236, option 1).
+const Y = 'accept-r3y';
+const YSCENARIO = '.surety/checks/run/r3-done.mjs';
+const TIGHTENED = { ...FILES, [`.surety/checks/defs/${Y}.json`]: json({ ...XDEF, key: Y, inputs: [YSCENARIO] }), [YSCENARIO]: "export const expect = 'a finished task is listed as done';\n" };
 const finding = (severity) => ({ category: 'defect', severity, message: 'the list does not show a finished task as done after it is marked', check: X, criterion: 'R3.1' });
-const correctionScript = () => ({ steps: [usage(600, 0, 200), ...Object.entries(TIGHTENED).map(([p, c]) => write(p, c)), result({ proposal: { rationale: `${X} also asserts the listed state the defect breaks`, requested_change_kind: 'tightening' } })] });
+const correctionScript = () => ({ steps: [usage(600, 0, 200), ...Object.entries(TIGHTENED).map(([p, c]) => write(p, c)), result({ proposal: { rationale: `${Y} asserts the listed state the defect breaks, beside ${X}`, requested_change_kind: 'tightening' } })] });
 
 const fixItems = (home, p, F) => workOfKind(home, p, 'fix').filter((w) => w.subject?.finding === F);
 const corrections = (home, p, F) => workOfKind(home, p, 'check_correction').filter((w) => w.trigger_id === F);
 const candidate = (home, id) => one(home, 'SELECT * FROM "candidates" WHERE "id" = ?', id);
 const effectiveVersionId = (home, p) => one(home, 'SELECT "id" FROM "protected_versions" WHERE "project" = ? AND "authorized" = 1 AND "effective_from" IS NOT NULL AND "superseded_by" IS NULL', p)?.id ?? null;
 
-// X's exit on an execution: `mode` 'a' fails on every candidate made before
-// F's fix item; 'b' passes under the version before the tightening, fails
-// under the tightened one on those candidates; 'c' always passes.
+// The exits: `mode` 'a': X fails on every candidate made before F's fix
+// item; 'b': X always passes, Y fails on those candidates; 'c': X and Y
+// always pass. Every other check passes.
 function exitsFor(fx, p, mode, S) {
   return (x) => {
-    if (x.key !== X) return 0;
+    const failing = mode === 'a' ? X : mode === 'b' ? Y : null;
+    if (x.key !== failing) return 0;
     const fix = S.F ? fixItems(fx.home, p, S.F)[0] : null;
     const c = candidate(fx.home, x.candidate);
     if (fix && Date.parse(c.created_at) >= Date.parse(fix.created_at)) return 0;
-    if (mode === 'a') return 1;
-    if (mode === 'b') return S.V0 && x.protected_version !== S.V0 ? 1 : 0;
-    return 0;
+    return 1;
   };
 }
 
 // Iteration 1 to C's verification raising F. Returns {fx, p, it, S}.
-async function toFinding(t, { name, port, severity = 'low', mode = 'a', policy }) {
+async function toFinding(t, { name, port, severity = 'low', mode = 'a', policy, pauseAtF = false }) {
   const fx = await protoEngine(t, { config: { lease_ttl: 600 } });
   kindNext(fx, 'check_authoring', [authoringScript({ files: FILES })], authoringScript({ files: FILES }));
   kindNext(fx, 'verification', [{ steps: [usage(300, 0, 100), result({ findings: [finding(severity)] })] }], { steps: [usage(300, 0, 100), result()] });
@@ -156,6 +162,7 @@ async function toFinding(t, { name, port, severity = 'low', mode = 'a', policy }
       const f = rows(fx.home, 'SELECT * FROM "findings" WHERE "project" = ? AND "check" = ?', p, X)[0];
       if (!f) return undefined;
       if (S.F === null) {
+        if (pauseAtF) await pauseProject(fx.engine, p);
         S.F = f.id;
         S.V0 = effectiveVersionId(fx.home, p);
         S.repairsAtF = (await iterationRead(fx, p, it.id)).remaining.repairs_iteration;
@@ -180,7 +187,7 @@ function assertNeverByPolicy(fx, F, what) {
   assert.equal(f.effective_severity, f.proposed_severity, `${what}: its severity as raised`);
 }
 
-async function assertRepairedByPolicy(J, what, { tightenedVersion = null } = {}) {
+async function assertRepairedByPolicy(J, what, { verifying = X } = {}) {
   const { fx, p, it, S, exitOf } = J;
   const F = S.F;
   const resolved = await pumpWith(fx, p, () => (findingRow(fx.home, F).status === 'resolved' ? findingRow(fx.home, F) : undefined), { exitOf, log: S.exitLog, max: 80, what: `${what}: F resolved` });
@@ -194,10 +201,9 @@ async function assertRepairedByPolicy(J, what, { tightenedVersion = null } = {})
   assert.equal(read.remaining.repairs_iteration, S.repairsAtF - 1, `${what}: one unit of prototype_repairs_per_iteration consumed (${S.repairsAtF} → ${read.remaining.repairs_iteration})`);
   const next = rows(fx.home, 'SELECT * FROM "candidates" WHERE "project" = ? AND "created_at" >= ? ORDER BY "seq"', p, fixes[0].created_at)[0];
   assert.ok(next, `${what}: the next candidate nominated after the fix`);
-  const passed = resultsOf(fx.home, next.id, X).filter((r) => r.exit_status === 0 && r.invalidated_at === null);
-  assert.ok(passed.length >= 1, `${what}: X passes on ${next.id} (${show(resultsOf(fx.home, next.id, X).map((r) => [r.id, r.exit_status]))})`);
+  const passed = resultsOf(fx.home, next.id, verifying).filter((r) => r.exit_status === 0 && r.invalidated_at === null);
+  assert.ok(passed.length >= 1, `${what}: ${verifying} passes on ${next.id} (${show(resultsOf(fx.home, next.id, verifying).map((r) => [r.id, r.exit_status]))})`);
   assert.ok(passed.some((r) => r.id === resolved.resolution_verification?.check_result), `${what}: F resolved by that result (${show(resolved.resolution_verification)})`);
-  if (tightenedVersion) assert.equal(passed.find((r) => r.id === resolved.resolution_verification.check_result).protected_version, tightenedVersion, `${what}: under the tightened version`);
   assertNeverByPolicy(fx, F, what);
   // The delegation record.
   const entries = objectsWhere(read, (o) => show(o).includes(F) && ('performed_by' in o || o.kind === 'fix_registered'));
@@ -218,35 +224,39 @@ describe('M637 a verifiable defect within the brief is repaired on the brief\'s 
     });
   }
 
-  test('(b) X passed on C: no fix yet; check correction to the Verifier; its tightening applied by policy; the tightened X fails on C; then repaired as (a)', { timeout: 600_000 }, async (t) => {
+  test('(b) X passed on C: no fix yet; the correction adds Y covering K beside X, applied by policy; Y fails on C: F bound to Y, X kept in its history; then repaired as (a) with Y verifying', { timeout: 600_000 }, async (t) => {
     const J = await toFinding(t, { name: 'M637 b', port: 18703, mode: 'b' });
     const { fx, p, S, exitOf } = J;
-    const corr = await pumpWith(fx, p, () => corrections(fx.home, p, S.F).find((w) => runsOn(fx.home, w.id).some((r) => r.state === 'ended')), { exitOf, log: S.exitLog, max: 40, what: "(b) the check correction's run" });
     assert.ok(resultsOf(fx.home, S.C, X).some((r) => r.exit_status === 0 && r.protected_version === S.V0), '(b) the fixture is live: X passed on C');
+    const corr = await pumpWith(fx, p, () => corrections(fx.home, p, S.F).find((w) => runsOn(fx.home, w.id).some((r) => r.state === 'ended')), { exitOf, log: S.exitLog, max: 40, what: "(b) the check correction's run" });
     const proposal = runsOn(fx.home, corr.id).flatMap((r) => proposalsOfRun(fx.home, r.id)).at(-1);
-    assert.ok(proposal, '(b) the Verifier proposed the tightening');
-    const V = await pumpWith(fx, p, () => versionsOfProposal(fx.home, proposal.id).find((v) => v.effective_from !== null), { exitOf, log: S.exitLog, max: 40, what: '(b) the tightening applied' });
+    assert.ok(proposal, '(b) the Verifier proposed the added check');
+    const V = await pumpWith(fx, p, () => versionsOfProposal(fx.home, proposal.id).find((v) => v.effective_from !== null), { exitOf, log: S.exitLog, max: 40, what: '(b) the added check applied' });
     assert.deepEqual([V.approver_authority, V.approved_by], ['policy', 'policy:rapid_prototype'], `(b) applied under M636 (${show([V.approver_authority, V.approved_by])})`);
     assert.equal(rows(fx.home, `SELECT 1 FROM "work_items" WHERE "kind" = 'review' AND "trigger_id" = ?`, proposal.id).length, 0, '(b) no Reviewer (recommend)');
     const fixAtApplication = rows(fx.home, `SELECT "id", "created_at" FROM "work_items" WHERE "kind" = 'fix' AND json_extract("subject", '$.finding') = ? AND "created_at" < ?`, S.F, V.effective_from);
-    assert.deepEqual(fixAtApplication, [], '(b) no fix before the tightened check reproduced F');
-    await assertRepairedByPolicy(J, '(b)', { tightenedVersion: null });
-    assert.ok(resultsOf(fx.home, S.C, X).some((r) => r.exit_status === 1 && r.protected_version === V.id), `(b) the tightened X failed on C (${show(resultsOf(fx.home, S.C, X).map((r) => [r.exit_status, r.protected_version]))})`);
+    assert.deepEqual(fixAtApplication, [], '(b) no fix before Y reproduced F');
+    const { resolved } = await assertRepairedByPolicy(J, '(b)', { verifying: Y });
+    assert.ok(resultsOf(fx.home, S.C, Y).some((r) => r.exit_status === 1 && r.protected_version === V.id), `(b) Y failed on C (${show(resultsOf(fx.home, S.C, Y).map((r) => [r.exit_status, r.protected_version]))})`);
+    assert.equal(resolved.check, Y, `(b) F's check bound to Y (${resolved.check})`);
+    const history = eventsAbout(fx.home, S.F).filter((e) => show(e.payload).includes(X) && show(e.payload).includes(Y));
+    assert.ok(history.length > 0 || show(resolved).includes(`"${X}"`) || Object.values(resolved).some((v) => typeof v === 'string' && v.includes(X)), `(b) X kept in the finding's check history (events about F: ${show(eventsAbout(fx.home, S.F).map((e) => [e.type, e.payload]))}; row: ${show(resolved)})`);
   });
 
-  test("(c) the tightened X still passes on C: the owner's finding_disposition question, its evidence saying the repair could not be verified", { timeout: 600_000 }, async (t) => {
+  test("(c) the correction's checks covering K all still pass on C: the owner's finding_disposition question, its evidence saying the repair could not be verified", { timeout: 600_000 }, async (t) => {
     const J = await toFinding(t, { name: 'M637 c', port: 18704, mode: 'c' });
     const { fx, p, S, exitOf } = J;
     const q = await pumpWith(fx, p, () => asked(fx.home, S.F).find((d) => d.status === 'open'), { exitOf, log: S.exitLog, max: 60, what: "(c) the owner's question about F" });
     const corr = corrections(fx.home, p, S.F);
     assert.ok(corr.length === 1 && runsOn(fx.home, corr[0].id).length >= 1, `(c) the correction was routed to the Verifier first (${show(corr.map((w) => [w.id, w.status]))})`);
     const applied = runsOn(fx.home, corr[0].id).flatMap((r) => proposalsOfRun(fx.home, r.id)).flatMap((x) => versionsOfProposal(fx.home, x.id)).find((v) => v.effective_from !== null);
-    assert.ok(applied, '(c) its tightening applied');
-    assert.ok(resultsOf(fx.home, S.C, X).some((r) => r.exit_status === 0 && r.protected_version === applied.id), '(c) the fixture is live: the tightened X passed on C');
+    assert.ok(applied, '(c) the added check applied');
+    for (const key of [X, Y]) assert.ok(resultsOf(fx.home, S.C, key).some((r) => r.exit_status === 0 && r.protected_version === applied.id), `(c) the fixture is live: ${key} passed on C under the corrected version`);
     assert.deepEqual(fixItems(fx.home, p, S.F), [], '(c) no fix registered');
     assert.equal(findingRow(fx.home, S.F).disposition, null, '(c) F undispositioned');
     const why = await decisionWhy(fx, p, q.id);
     assert.ok(why.reasons.length > 0, `(c) its evidence says why the policy did not repair it (stored: ${show(why.stored)}; served: ${show(why.decision).slice(0, 1500)})`);
+    assert.ok(why.reasons.some((r) => /verif/i.test(r)), `(c) saying the repair could not be verified (${show(why.reasons)})`);
     t.diagnostic(`(c) reasons: ${show(why.reasons)}; served by the decision read: ${why.served.length > 0}`);
     assertNeverByPolicy(fx, S.F, '(c)');
   });
@@ -291,22 +301,16 @@ describe('M637 a verifiable defect within the brief is repaired on the brief\'s 
   });
 
   test('a restart between the disposition and the fix dispatch: one fix item', { timeout: 600_000 }, async (t) => {
-    const J = await toFinding(t, { name: 'M637 restart', port: 18707, mode: 'a' });
-    const { fx, p, S, exitOf } = J;
-    await pauseProject(fx.engine, p);
-    let dispatched = null;
-    for (let i = 0; i < 10 && dispatched === null; i++) {
-      await tick(fx.engine, p, { rounds: 1 });
-      if (findingRow(fx.home, S.F).disposition !== null) dispatched = fixItems(fx.home, p, S.F).some((w) => runsOn(fx.home, w.id).length > 0);
-    }
-    if (dispatched === null) {
-      await resumeProject(fx.engine, p);
-      await pumpWith(fx, p, () => findingRow(fx.home, S.F).disposition !== null || undefined, { exitOf, max: 20, what: 'F dispositioned' });
-      dispatched = fixItems(fx.home, p, S.F).some((w) => runsOn(fx.home, w.id).length > 0);
-    }
-    t.diagnostic(`restart taken with F dispositioned; the fix ${dispatched ? 'already' : 'not yet'} dispatched`);
+    // The project paused when F is first recorded (no dispatch while paused); X's result then recorded.
+    const J = await toFinding(t, { name: 'M637 restart', port: 18707, mode: 'a', pauseAtF: true });
+    const { fx, p, S } = J;
+    for (let i = 0; i < 10 && findingRow(fx.home, S.F).disposition === null; i++) await tick(fx.engine, p, { rounds: 1 });
+    assert.equal(findingRow(fx.home, S.F).disposition, 'fix', 'the fixture is live: F dispositioned while the project is paused');
+    const runsBefore = fixItems(fx.home, p, S.F).flatMap((w) => runsOn(fx.home, w.id));
+    assert.deepEqual(runsBefore.map((r) => r.id), [], 'the fixture is live: the fix not yet dispatched');
+    await idle(fx, p);
     await restart(fx);
-    await resumeProject(fx.engine, p).catch(() => null);
+    await resumeProject(fx.engine, p);
     await assertRepairedByPolicy(J, 'after the restart');
     assert.equal(fixItems(fx.home, p, S.F).length, 1, 'one fix item');
   });
