@@ -60,6 +60,12 @@
 // - "one unit consumed" is read as the iteration read's
 //   `remaining.repairs_iteration` one lower once the fix is dispatched than
 //   when F was first recorded.
+// - Order is the store's (DECISIONS item 51; objection 239), never a wall
+//   clock: "the next candidate" is the first whose candidate.nominated event
+//   comes after the fix item's work.created event, and the scripted boundary
+//   fails X (or Y) only on candidates nominated before it; the controlled
+//   clock's offset does not survive a restart, so stamps cannot order facts
+//   across one.
 // - "the next candidate" is the first nominated after the fix item was
 //   made; "X passes on it" its X result exit 0; `resolution_verification`'s
 //   `check_result` is that result.
@@ -130,6 +136,10 @@ const correctionScript = () => ({ steps: [usage(600, 0, 200), ...Object.entries(
 const fixItems = (home, p, F) => workOfKind(home, p, 'fix').filter((w) => w.subject?.finding === F);
 const corrections = (home, p, F) => workOfKind(home, p, 'check_correction').filter((w) => w.trigger_id === F);
 const candidate = (home, id) => one(home, 'SELECT * FROM "candidates" WHERE "id" = ?', id);
+// Store order (DECISIONS item 51; objection 239): the seq of an event about a subject.
+const eventSeq = (home, type, key, id) => one(home, `SELECT "seq" FROM "events" WHERE "type" = ? AND json_extract("subject", '$.' || ?) = ? ORDER BY "seq" LIMIT 1`, type, key, id)?.seq ?? null;
+const fixPlace = (home, fix) => eventSeq(home, 'work.created', 'work_item', fix.id);
+const nominatedPlace = (home, c) => eventSeq(home, 'candidate.nominated', 'candidate', c);
 const effectiveVersionId = (home, p) => one(home, 'SELECT "id" FROM "protected_versions" WHERE "project" = ? AND "authorized" = 1 AND "effective_from" IS NOT NULL AND "superseded_by" IS NULL', p)?.id ?? null;
 
 // The exits: `mode` 'a': X fails on every candidate made before F's fix
@@ -141,7 +151,9 @@ function exitsFor(fx, p, mode, S) {
     if (x.key !== failing) return 0;
     const fix = S.F ? fixItems(fx.home, p, S.F)[0] : null;
     const c = candidate(fx.home, x.candidate);
-    if (fix && Date.parse(c.created_at) >= Date.parse(fix.created_at)) return 0;
+    const at = fix ? fixPlace(fx.home, fix) : null;
+    const nominated = nominatedPlace(fx.home, c.id);
+    if (at !== null && nominated !== null && nominated > at) return 0;
     return 1;
   };
 }
@@ -201,7 +213,9 @@ async function assertRepairedByPolicy(J, what, { verifying = X } = {}) {
   assert.ok(fixRuns.length >= 1, `${what}: the fix dispatched`);
   const read = await iterationRead(fx, p, it);
   assert.equal(read.remaining.repairs_iteration, S.repairsAtF - 1, `${what}: one unit of prototype_repairs_per_iteration consumed (${S.repairsAtF} → ${read.remaining.repairs_iteration})`);
-  const next = rows(fx.home, 'SELECT * FROM "candidates" WHERE "project" = ? AND "created_at" >= ? ORDER BY "seq"', p, fixes[0].created_at)[0];
+  const fixAt = fixPlace(fx.home, fixes[0]);
+  assert.ok(fixAt !== null, `${what}: the fix item's work.created is recorded`);
+  const next = rows(fx.home, 'SELECT * FROM "candidates" WHERE "project" = ? ORDER BY "seq"', p).find((c) => (nominatedPlace(fx.home, c.id) ?? -1) > fixAt);
   assert.ok(next, `${what}: the next candidate nominated after the fix`);
   const passed = resultsOf(fx.home, next.id, verifying).filter((r) => r.exit_status === 0 && r.invalidated_at === null);
   assert.ok(passed.length >= 1, `${what}: ${verifying} passes on ${next.id} (${show(resultsOf(fx.home, next.id, verifying).map((r) => [r.id, r.exit_status]))})`);
@@ -236,8 +250,10 @@ describe('M637 a verifiable defect within the brief is repaired on the brief\'s 
     const V = await pumpWith(fx, p, () => versionsOfProposal(fx.home, proposal.id).find((v) => v.effective_from !== null), { exitOf, log: S.exitLog, max: 40, what: '(b) the added check applied' });
     assert.deepEqual([V.approver_authority, V.approved_by], ['policy', 'policy:rapid_prototype'], `(b) applied under M636 (${show([V.approver_authority, V.approved_by])})`);
     assert.equal(rows(fx.home, `SELECT 1 FROM "work_items" WHERE "kind" = 'review' AND "trigger_id" = ?`, proposal.id).length, 0, '(b) no Reviewer (recommend)');
-    const fixAtApplication = rows(fx.home, `SELECT "id", "created_at" FROM "work_items" WHERE "kind" = 'fix' AND json_extract("subject", '$.finding') = ? AND "created_at" < ?`, S.F, V.effective_from);
-    assert.deepEqual(fixAtApplication, [], '(b) no fix before Y reproduced F');
+    const appliedAt = eventsAbout(fx.home, proposal.id).find((e) => e.type === 'protected.approved')?.seq ?? null;
+    assert.ok(appliedAt !== null, '(b) the fixture is live: protected.approved recorded');
+    const fixBefore = fixItems(fx.home, p, S.F).filter((w) => (fixPlace(fx.home, w) ?? Infinity) < appliedAt);
+    assert.deepEqual(fixBefore.map((w) => w.id), [], '(b) no fix before the added check was approved (store order)');
     const { resolved } = await assertRepairedByPolicy(J, '(b)', { verifying: Y });
     assert.ok(resultsOf(fx.home, S.C, Y).some((r) => r.exit_status === 1 && r.protected_version === V.id), `(b) Y failed on C (${show(resultsOf(fx.home, S.C, Y).map((r) => [r.exit_status, r.protected_version]))})`);
     assert.equal(resolved.check, Y, `(b) F's check bound to Y (${resolved.check})`);
