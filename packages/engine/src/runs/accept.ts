@@ -498,7 +498,7 @@ export class Acceptor {
     const model = validateModelBrief((facts.result?.report as { brief?: unknown } | undefined)?.brief, parsed.representation);
     if ('refused' in model) return { refused: `the brief is refused: ${model.refused}` };
     const served = await this.rt.read<BriefFacts>('prototype.brief_facts', { project: facts.project.id, run: facts.run.id, environments: parsed.representation.environments.map((e) => e.name) });
-    const brief = composeBrief(model.brief, served, nowIso());
+    const brief = composeBrief(model.brief, served, nowIso(), parsed.representation);
     const problem = briefShapeProblem(brief);
     if (problem !== null) return { refused: `the brief is refused: ${problem}` };
     const content = Buffer.from(`${JSON.stringify({ brief }, null, 2)}\n`);

@@ -20,6 +20,30 @@ export interface Actor {
   actor_kind: ActorKind;
   actor_id: string | null;
   request_id: string | null;
+  // D7 (DECISIONS item 57, the owner's ruling of 2026-11-26: "An agent
+  // acting on my instruction must be distinguishable from my own GUI
+  // click"): an owner request an agent sent on the owner's instruction, as
+  // the caller stated it (the engine cannot authenticate the statement; it
+  // records what is stated). Absent: the owner's own act.
+  delegation?: Delegation | null;
+}
+
+export interface Delegation {
+  performed_by: 'agent';
+  agent: string;
+  instructed_by: 'owner';
+  instruction: string | null;
+}
+
+// Who performed what the actor did, as recorded on an approval, an answer
+// and the receipt (D7): the owner, an agent on the owner's instruction, the
+// engine, or a run.
+export function delegationOf(actor: Actor): Record<string, unknown> {
+  if (actor.actor_kind === 'human') {
+    const d = actor.delegation;
+    return d ? { performed_by: `agent:${d.agent}`, agent: d.agent, instructed_by: d.instructed_by, instruction: d.instruction } : { performed_by: 'owner' };
+  }
+  return { performed_by: actor.actor_kind === 'engine' ? 'engine' : `run:${actor.actor_id ?? 'unknown'}` };
 }
 
 export const ENGINE_ACTOR: Actor = { actor_kind: 'engine', actor_id: null, request_id: null };
@@ -41,7 +65,11 @@ export class Tx {
   constructor(
     readonly db: Database,
     readonly actor: Actor,
-  ) {}
+  ) {
+    // D7: every event of a delegated owner request names the delegation in
+    // its payload (its actor_id is `agent:<name>`).
+    if (actor.actor_kind === 'human' && actor.delegation) this.stamp = { delegation: delegationOf(actor) };
+  }
 
   newId(prefix: string): string {
     return newId(prefix);

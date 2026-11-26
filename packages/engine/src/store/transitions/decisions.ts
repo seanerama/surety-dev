@@ -10,7 +10,7 @@
 import { Refusal } from '../../refusal.js';
 import { canonical, nextSeq, notFound, sha256 } from './common.js';
 import { engineSettings } from './settings.js';
-import type { Tx } from './tx.js';
+import { type Tx, delegationOf } from './tx.js';
 
 export const TRANSITION_SCHEMA_VERSION = 1;
 
@@ -268,7 +268,9 @@ export function manifestChanges(before: unknown, after: unknown): string[] {
 // consumed. The caller has already checked the preview and the option, and
 // records the effect in the same transaction.
 export function consumeDecision(tx: Tx, d: DecisionRow, option: string, note: string | null): void {
-  const answer = { option, note, actor: tx.actor.actor_kind, at: tx.at };
+  // D7 (DECISIONS item 57): who performed the answer, the owner or an agent
+  // on the owner's instruction, as the request stated it.
+  const answer = { option, note, actor: tx.actor.actor_kind, at: tx.at, delegation: delegationOf(tx.actor) };
   tx.db.prepare(`UPDATE "decisions" SET "status" = 'answered', "answer" = ? WHERE "id" = ?`).run(JSON.stringify(answer), d.id);
   tx.emit('decision.answered', decisionSubject(d), { kind: d.kind, option });
   tx.db.prepare(`UPDATE "decisions" SET "status" = 'consumed', "consumed_at" = ? WHERE "id" = ?`).run(tx.at, d.id);

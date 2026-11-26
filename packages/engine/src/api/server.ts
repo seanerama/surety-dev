@@ -48,7 +48,7 @@ import type { RecordRow } from '../store/transitions/records.js';
 import { EventReader } from '../store/reader-client.js';
 import { newId } from '../ids.js';
 import { Refusal, storeError } from '../refusal.js';
-import type { Actor } from '../store/transitions/tx.js';
+import type { Actor, Delegation } from '../store/transitions/tx.js';
 import { pausePoint, seamBackends, seamDescribe, seamRoute, seamScriptedProvider, seamTokenRead } from '../testing/seam.js';
 import { DEFENSIVE_HEADERS, checkBootstrapEvidence, checkOrigin, checkTarget, checkToken, payloadTooLarge, readJsonBody } from './boundary.js';
 import { SHELL_CSP, loadShell } from './shell.js';
@@ -140,6 +140,33 @@ const optionalString = (b: Record<string, unknown>, field: string): string | und
   if (typeof v !== 'string') throw new Refusal(400, 'invalid_value', `"${field}" must be a string.`, `Send "${field}" as a string.`, { field });
   return v;
 };
+
+// D7 (DECISIONS item 57, the owner's ruling of 2026-11-26: "Record who
+// authorized the action, who performed it, and the scope of the delegation.
+// An agent acting on my instruction must be distinguishable from my own GUI
+// click."): every owner command takes an optional `delegation`
+// {performed_by: "agent", agent, instruction, instructed_by: "owner"}, the
+// caller's statement that an agent sends this request on the owner's
+// instruction. It is taken off the body before the command reads it, and
+// recorded on the request's actor (events.actor_id `agent:<name>`, the
+// approval's and the answer's delegation). Absent, the act is the owner's
+// own (the console never sends it). The engine cannot authenticate the
+// statement: it records what the caller states.
+const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export function takeDelegation(b: unknown): { body: unknown; delegation: Delegation | null } {
+  if (!isObject(b) || !Object.hasOwn(b, 'delegation')) return { body: b, delegation: null };
+  const { delegation: d, ...rest } = b;
+  const bad = (what: string, field = 'delegation') => new Refusal(400, 'invalid_value', `"${field}" ${what}.`, 'Send delegation as {"performed_by": "agent", "agent": "<name>", "instruction": "<the owner\'s instruction>", "instructed_by": "owner"}, or leave it out for your own act; nothing was changed.', { field });
+  if (!isObject(d)) throw bad('must be an object');
+  for (const key of Object.keys(d)) {
+    if (!['performed_by', 'agent', 'instruction', 'instructed_by'].includes(key)) throw new Refusal(400, 'unknown_field', `"delegation.${key}" is not a field of a delegation.`, 'Send only performed_by, agent, instruction and instructed_by.', { field: `delegation.${key}` });
+  }
+  if (d.performed_by !== 'agent') throw bad('must be "agent"', 'delegation.performed_by');
+  if (typeof d.agent !== 'string' || !AGENT_NAME.test(d.agent)) throw bad('must name the agent: 1 to 64 letters, digits, ".", "_" or "-"', 'delegation.agent');
+  if (d.instruction !== undefined && (typeof d.instruction !== 'string' || d.instruction.length > 2000)) throw bad('must be a string of at most 2000 characters', 'delegation.instruction');
+  if (d.instructed_by !== undefined && d.instructed_by !== 'owner') throw bad('must be "owner"', 'delegation.instructed_by');
+  return { body: rest, delegation: { performed_by: 'agent', agent: d.agent, instructed_by: 'owner', instruction: typeof d.instruction === 'string' ? d.instruction : null } };
+}
 
 const noFields = (b: unknown) => {
   if (b === undefined) return;
@@ -1261,13 +1288,17 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
         const rt = state.runtime;
         const run = async (): Promise<void> => {
           let args: unknown;
+          // D7: the request's actor, with the delegation its body states.
+          let by: Actor = actor;
           try {
-            args = route.kind === 'command' ? route.args(await body(r)) : await route.prepare(await body(r));
+            const taken = takeDelegation(await body(r));
+            if (taken.delegation !== null) by = { ...actor, actor_id: `agent:${taken.delegation.agent}`, delegation: taken.delegation };
+            args = route.kind === 'command' ? route.args(taken.body) : await route.prepare(taken.body);
           } catch (err) {
             return refuseAudited(err);
           }
           try {
-            const result = await store().call<Reply & { effects?: { kind: string; run?: string }[] }>('mutate', { name: route.name, args, actor, method, path: target.path });
+            const result = await store().call<Reply & { effects?: { kind: string; run?: string }[] }>('mutate', { name: route.name, args, actor: by, method, path: target.path });
             if (route.kind === 'prepared' && route.settle) await route.settle(args);
             // What the route intended, driven before the project's journal is let go.
             if (lock !== undefined && rt?.services) await rt.services.journal(lock).catch((err) => log('journal', err, { project: lock }));

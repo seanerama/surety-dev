@@ -621,7 +621,7 @@ test('the preparation run\'s package: the task, the brief instructions and the b
   const text = B.briefPreparationText(facts).join('\n');
   assert.match(text, /3 to 5 requirements, each an observable objective/);
   assert.match(text, /propose a smaller scope: keep the objectives that show the idea best, and list everything you leave out in `left_out`\. Never drop a requirement silently/);
-  assert.match(text, /Do not report version, prepared_at, target, models, preparation, limits, stop_conditions: the engine fills them/);
+  assert.match(text, /Do not report version, prepared_at, target, models, preparation, limits, required_checks, repairs, plan_bounds, stop_conditions: the engine fills them/);
   assert.deepEqual(B.BRIEF_RESULT_SCHEMA.required, [...B.MODEL_FIELDS]);
   assert.deepEqual([B.BRIEF_RESULT_SCHEMA.properties.objectives.minItems, B.BRIEF_RESULT_SCHEMA.properties.objectives.maxItems], [3, 5]);
 });
@@ -687,4 +687,94 @@ test('D1: a plan within the bounds that declares `uncertain` is published by the
   assert.deepEqual([acts[0].kind, acts[0].subject_type, acts[0].subject_id, acts[0].authorized_by_kind, acts[0].authorized_by, acts[0].performed_by], ['plan_published', 'plan_bundle', plan.bundle, 'decision', it.brief_decision, 'policy:rapid_prototype']);
   assert.deepEqual(JSON.parse(acts[0].basis), basis);
   assert.equal(readIteration(db, { project: p.id, iteration: p.iteration }).owner_approvals.count, before, 'the published plan is no owner approval');
+});
+
+// ---- DECISIONS item 57, S7 and D7: the brief states what one approval authorizes; the delegation record ----
+
+const { recordApiAct } = await import(join(dist, 'store', 'transitions', 'audit.js'));
+const { takeDelegation } = await import(join(dist, 'api', 'server.js'));
+const AGENT = { actor_kind: 'human', actor_id: 'agent:driver', request_id: 'req-agent', delegation: { performed_by: 'agent', agent: 'driver', instructed_by: 'owner', instruction: 'approve the brief as Sean asked' } };
+
+test('S7: the brief states the required checks, the repairs, the plan bounds, the target as configured and the preparation as already spent; an older brief is served with those fields null, named not_in_brief_version', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create();
+  answer(db, p.id, decisionsOf(db, p.id, 'prototype_preparation_approval')[0]);
+  const parsed = parseSpecification(specText(3));
+  const b = prepareBrief(db, p.id);
+  assert.deepEqual(Object.keys(b.brief), [...B.BRIEF_FIELDS]);
+  // The unit helper composes without the representation: the criteria are then unknown, never [].
+  assert.equal(b.brief.required_checks.criteria, null);
+  const full = B.requiredChecksOf(parsed.representation);
+  assert.deepEqual(full.criteria, ['R1.1', 'R2.1', 'R3.1']);
+  assert.deepEqual([full.tier, full.kinds, full.post_deploy], ['T1', ['acceptance', 'smoke'], ['post_deploy_behavior']]);
+  assert.match(full.tightenings, /tied to the brief's criteria, using the approved check commands and execution permissions/);
+  assert.deepEqual([b.brief.repairs.per_iteration, b.brief.repairs.per_stage], [4, 2]);
+  assert.match(b.brief.repairs.never, /Lowering, accepting or deferring a finding is never a repair/);
+  assert.deepEqual([b.brief.plan_bounds.phase, b.brief.plan_bounds.phases, b.brief.plan_bounds.max_stages], [1, 1, 2]);
+  assert.deepEqual([b.brief.target.environment, b.brief.target.config, b.brief.target.config_identity], ['alpha', null, null], 'not configured yet: unknown, not invented');
+  assert.equal(b.brief.preparation.spent, true);
+  assert.equal(b.brief.preparation.authorized_by.kind, 'decision');
+  assert.match(b.brief.preparation.this_approval, /approving the brief authorizes the build, not the preparation/);
+  assert.equal(B.briefShapeProblem(b.brief), null);
+  assert.equal(readIteration(db, { project: p.id, iteration: p.iteration }).brief_absent, null);
+  // A brief recorded before item 57.
+  const old = Object.fromEntries(B.BRIEF_FIELDS_BEFORE_0053.map((k) => [k, b.brief[k]]));
+  db.prepare('UPDATE prototype_iterations SET brief_json = ? WHERE id = ?').run(JSON.stringify(old), p.iteration);
+  const read = readIteration(db, { project: p.id, iteration: p.iteration });
+  assert.deepEqual(Object.keys(read.brief), [...B.BRIEF_FIELDS]);
+  assert.deepEqual([read.brief.required_checks, read.brief.repairs, read.brief.plan_bounds], [null, null, null]);
+  assert.deepEqual(read.brief_absent, { fields: ['required_checks', 'repairs', 'plan_bounds'], basis: 'not_in_brief_version' });
+  assert.equal(read.brief.app, b.brief.app, 'what it has is served as written');
+});
+
+test('D7: an answer an agent sends on the owner\'s instruction is recorded as performed by the agent, distinguishable from the owner\'s own; earlier records are not_recorded, never inferred', async (t) => {
+  const { db, create } = scratch(t);
+  const p = await create();
+  const prep = decisionsOf(db, p.id, 'prototype_preparation_approval')[0];
+  answer(db, p.id, prep);
+  transact(db, HUMAN, (tx) => recordApiAct(tx, { method: 'POST', path: `/v1/projects/${p.id}/decisions/${prep.id}/answer`, status: 200 }));
+  const b = prepareBrief(db, p.id);
+  transact(db, AGENT, (tx) => {
+    answerQueued(tx, { project: p.id, decision: b.decision.id, option: 'approve', preview_hash: b.decision.preview_hash, note: null });
+    recordApiAct(tx, { method: 'POST', path: `/v1/projects/${p.id}/decisions/${b.decision.id}/answer`, status: 200 });
+  });
+  transact(db, AGENT, (tx) => recordApiAct(tx, { method: 'POST', path: `/v1/projects/${p.id}/pause`, status: 200 }));
+  transact(db, HUMAN, (tx) => recordApiAct(tx, { method: 'POST', path: `/v1/projects/${p.id}/resume`, status: 200 }));
+  transact(db, HUMAN, (tx) => recordApiAct(tx, { method: 'POST', path: `/v1/projects/${p.id}/iterations/${p.iteration}/prepare`, status: 409 }));
+  const appr = (d) => JSON.parse(db.prepare('SELECT delegation FROM approvals WHERE decision = ?').get(d).delegation);
+  assert.deepEqual(appr(prep.id), { performed_by: 'owner', scope: { decision: prep.id, kind: 'prototype_preparation_approval', subject_type: 'prototype_iteration', subject_id: p.iteration } });
+  assert.deepEqual(appr(b.decision.id).performed_by, 'agent:driver');
+  assert.deepEqual([appr(b.decision.id).instructed_by, appr(b.decision.id).instruction], ['owner', 'approve the brief as Sean asked']);
+  // The decision read's answer and the events.
+  assert.equal(JSON.parse(getDecisionRow(db, b.decision.id).answer).delegation.performed_by, 'agent:driver');
+  assert.equal(JSON.parse(getDecisionRow(db, prep.id).answer).delegation.performed_by, 'owner');
+  const consumedEv = db.prepare(`SELECT actor_id, payload FROM events WHERE type = 'decision.consumed' AND json_extract(subject, '$.decision') = ?`).get(b.decision.id);
+  assert.equal(consumedEv.actor_id, 'agent:driver');
+  assert.equal(JSON.parse(consumedEv.payload).delegation.performed_by, 'agent:driver');
+  // The receipt.
+  const read = iterationReceipt(db, { project: p.id, iteration: p.iteration });
+  const ans = Object.fromEntries(read.owner_answers.map((a) => [a.kind, a]));
+  assert.deepEqual([ans.prototype_preparation_approval.delegation.performed_by, ans.prototype_preparation_approval.basis], ['owner', 'recorded']);
+  assert.deepEqual([ans.spec_approval.delegation.performed_by, ans.spec_approval.option], ['agent:driver', 'approve']);
+  assert.deepEqual(read.owner_acts.map((a) => [a.path.split('/').slice(4).join('/'), a.delegation?.performed_by ?? null]), [
+    ['pause', 'agent:driver'],
+    ['resume', 'owner'],
+  ], 'every accepted act (answers are owner_answers), the refused one not');
+  assert.equal(read.owner_approvals.count, 2, 'kept as before');
+  // Recorded before migration 0053: as written, never inferred.
+  db.prepare('UPDATE decisions SET answer = json_remove(answer, \'$.delegation\') WHERE id = ?').run(prep.id);
+  db.prepare('UPDATE approvals SET delegation = NULL WHERE decision = ?').run(prep.id);
+  const again = readIteration(db, { project: p.id, iteration: p.iteration }).owner_answers.find((a) => a.decision === prep.id);
+  assert.deepEqual([again.delegation, again.basis], [null, 'not_recorded']);
+});
+
+test('D7: the API takes the delegation off the body, validated; absent, the act is the owner\'s own', () => {
+  assert.deepEqual(takeDelegation({ option: 'approve' }), { body: { option: 'approve' }, delegation: null });
+  assert.deepEqual(takeDelegation(undefined), { body: undefined, delegation: null });
+  const taken = takeDelegation({ option: 'approve', delegation: { performed_by: 'agent', agent: 'driver', instruction: 'go', instructed_by: 'owner' } });
+  assert.deepEqual(taken, { body: { option: 'approve' }, delegation: { performed_by: 'agent', agent: 'driver', instructed_by: 'owner', instruction: 'go' } });
+  for (const bad of [{ performed_by: 'owner', agent: 'x' }, { performed_by: 'agent' }, { performed_by: 'agent', agent: 'a b' }, { performed_by: 'agent', agent: 'x', instruction: 'i'.repeat(2001) }, { performed_by: 'agent', agent: 'x', instructed_by: 'someone' }, 'agent']) {
+    assert.throws(() => takeDelegation({ delegation: bad }), (e) => e.code === 'invalid_value', JSON.stringify(bad));
+  }
+  assert.throws(() => takeDelegation({ delegation: { performed_by: 'agent', agent: 'x', on_behalf: 'y' } }), (e) => e.code === 'unknown_field');
 });

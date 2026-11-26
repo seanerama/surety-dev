@@ -46,7 +46,7 @@ import { CORRECTION_KIND, approveProposal, effectiveVersion, getProposal, invali
 import { type OobRow, type RegistryRow, integrationRef, nextCounter, projectRepoRow, recordRevision, registerRef, registryRow } from './repo.js';
 import { getRun, heldOnRequalification, refusalOf, requalificationHold } from './runs.js';
 import { engineSettings, policyRevision, projectEffective } from './settings.js';
-import type { Tx } from './tx.js';
+import { type Tx, delegationOf } from './tx.js';
 import { canaryKindsOf } from '../../trust/canaries.js';
 import { admissionRefusal, attemptAdmission } from './qualification-budget.js';
 import { activateEntry, attemptManifest, authorizeAttempt, currentHostQualification, entryManifest, getAttempt, getEntry, getHostRow } from './trust.js';
@@ -152,8 +152,8 @@ function recordApproval(tx: Tx, d: DecisionRow, args: { consequence: string; sub
   tx.db
     .prepare(
       `INSERT INTO "approvals" ("id", "created_at", "project", "decision", "actor", "consequence", "subject_type", "subject_id", "acceptance_content_hash", "result_hash",
-         "policy_revision", "consumed_at")
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         "policy_revision", "consumed_at", "delegation")
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -168,6 +168,8 @@ function recordApproval(tx: Tx, d: DecisionRow, args: { consequence: string; sub
       args.resultHash ?? null,
       d.project === null ? null : policyRevisionId(tx.db, d.project),
       tx.at,
+      // D7 (migration 0053): who performed the approval and its scope.
+      canonical({ ...delegationOf(tx.actor), scope: { decision: d.id, kind: d.kind, subject_type: d.subject_type, subject_id: d.subject_id } }),
     );
   return id;
 }
