@@ -320,8 +320,11 @@ describe('M646 the maintenance job replayed', () => {
     // failing check covering R5.5 reproduces the finding and becomes its
     // check; accept-r5-5, the check the Verifier named, kept in its history.
     assert.equal(F.check, PRINT_CHECK, `the finding's check is bound to the correction's accept-r5-5-print (check ${F.check})`);
-    const elsewhere = Object.entries(F).filter(([k, v]) => k !== 'check' && k !== 'message' && typeof v === 'string' && (v === 'accept-r5-5' || v.includes('"accept-r5-5"')));
-    assert.ok(elsewhere.length > 0, `accept-r5-5, the named check, kept in the finding's history (${show(F)})`);
+    // The history the engine keeps: the finding.check_unbound event naming
+    // the check it named and the check it was bound to.
+    const unbound = eventsOfType(fx.home, 'finding.check_unbound').filter((e) => e.subject?.finding === F.id);
+    t.diagnostic(`finding.check_unbound: ${show(unbound)}`);
+    assert.ok(unbound.length === 1 && JSON.stringify(unbound[0]).includes('"check":"accept-r5-5"') && JSON.stringify(unbound[0]).includes(`"rebound_to":"${PRINT_CHECK}"`), `accept-r5-5, the named check, kept in the finding's history (${show(unbound)})`);
     const c2 = F.candidate;
     assert.equal(F.scope, 'candidate', `bound to the candidate it observed (D6) (scope ${F.scope})`);
     assert.equal(F.message, PRINT_FINDING.message, 'the production finding');
