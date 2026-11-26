@@ -2397,6 +2397,21 @@ export const MANIFEST_KEYS: Readonly<Record<DecisionKind, readonly string[]>> = 
 
 // ---- raising, answering, revalidating ---------------------------------------------------
 
+// DECISIONS item 57 (D2, D3): why the approved brief's policy did not act
+// (`policy_not_covered`, `policy_fix_refused`) is carried onto a later
+// generation of the same question raised with no evidence of its own, so
+// the owner always reads the reason. Only those keys; undefined otherwise.
+const POLICY_EVIDENCE_KEYS = ['policy_not_covered', 'policy_fix_refused'];
+function carriedPolicyEvidence(db: Db, args: { project: string | null; kind: string; subjectType: string; subjectId: string; scope?: string }): Record<string, unknown> | undefined {
+  const prior = db
+    .prepare(`SELECT "evidence" FROM "decisions" WHERE "kind" = ? AND "subject_type" = ? AND "subject_id" = ? AND "scope" = ? ORDER BY "semantic_generation" DESC LIMIT 1`)
+    .get(args.kind, args.subjectType, args.subjectId, args.scope ?? 'subject') as { evidence: string } | undefined;
+  const e = parseJson<Record<string, unknown>>(prior?.evidence ?? null);
+  if (!e || Array.isArray(e)) return undefined;
+  const kept = Object.fromEntries(Object.entries(e).filter(([k]) => POLICY_EVIDENCE_KEYS.includes(k)));
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
 // Raise the question of `kind` about a subject as it stands now, or return
 // the open one with the same preview; null if the question does not stand.
 export function raiseQuestion(
@@ -2419,7 +2434,7 @@ export function raiseQuestion(
     manifest: p.manifest,
     blockedWorkItems: p.blockedWorkItems,
     blockedOperation: p.blockedOperation,
-    evidence: args.evidence ?? p.evidence,
+    evidence: args.evidence ?? p.evidence ?? carriedPolicyEvidence(tx.db, args),
     // The caller's facts beside the preview's (decision.raised's payload).
     raised: args.raised === undefined ? p.raised : { ...(p.raised ?? {}), ...args.raised },
   });

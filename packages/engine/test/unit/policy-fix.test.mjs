@@ -24,6 +24,9 @@ const { transact, ENGINE_ACTOR } = await import(join(dist, 'store', 'transitions
 const { setEngineSettings } = await import(join(dist, 'store', 'transitions', 'settings.js'));
 const { askUndispositioned } = await import(join(dist, 'store', 'transitions', 'findings.js'));
 const { iterationAccount } = await import(join(dist, 'store', 'transitions', 'prototype.js'));
+const { readDecision } = await import(join(dist, 'store', 'projections.js'));
+const { raiseQuestion } = await import(join(dist, 'store', 'transitions', 'queue.js'));
+const { invalidateDecision } = await import(join(dist, 'store', 'transitions', 'decisions.js'));
 
 setEngineSettings({ lease_ttl: 90, git_deadline: 60, decision_targets: {}, incarnation: 'inc_1' });
 const AT = '2026-11-26T00:00:00.000Z';
@@ -205,4 +208,20 @@ test('objection 236 option 1: the named check fails: it reproduces the finding, 
   assert.equal(sweep(s.db), 0);
   assert.equal(finding(s.db).check, 'x', 'the named check first, though a covering check sorting before it failed too');
   assert.equal(s.db.prepare(`SELECT COUNT(*) AS n FROM events WHERE type = 'finding.check_unbound'`).get().n, 0);
+});
+
+test("the owner reads why the policy declined: GET …/decisions/:d serves the stored evidence; a later generation raised with none carries the reason", (t) => {
+  const s = store(t, { repairs: 0 });
+  assert.equal(sweep(s.db), 1);
+  const [d] = owed(s.db);
+  const read = readDecision(s.db, { project: 'prj_1', decision: d.id }).decision;
+  assert.match(read.evidence.policy_fix_refused, /repair_allowance_exhausted/);
+  // A re-raise with no evidence of its own (a manifest that moved, say).
+  const next = transact(s.db, ENGINE_ACTOR, (tx) => {
+    invalidateDecision(tx, tx.db.prepare('SELECT * FROM decisions WHERE id = ?').get(d.id), 'test: the manifest moved');
+    return raiseQuestion(tx, { project: 'prj_1', kind: 'finding_disposition', subjectType: 'finding', subjectId: 'fnd_1', scope: 'disposition_owed' });
+  });
+  assert.equal(next.semantic_generation, d.semantic_generation + 1);
+  assert.match(JSON.parse(next.evidence).policy_fix_refused, /repair_allowance_exhausted/, 'the reason carried');
+  assert.match(readDecision(s.db, { project: 'prj_1', decision: next.id }).decision.evidence.policy_fix_refused, /repair_allowance_exhausted/);
 });

@@ -1177,7 +1177,7 @@ export function readDecision(db: Db, args: { project: string; decision: string }
   const d = db
     .prepare(
       `SELECT "id", "project", "kind", "subject_type", "subject_id", "semantic_generation", "status", "question", "options", "dependency_manifest", "preview_hash",
-         "raised_at", "target_seconds", "escalated_at", "answer", "consumed_at", "invalidated_reason"
+         "raised_at", "target_seconds", "escalated_at", "answer", "consumed_at", "invalidated_reason", "evidence"
        FROM "decisions" WHERE "id" = ?`,
     )
     .get(args.decision) as Record<string, unknown> | undefined;
@@ -1201,6 +1201,10 @@ export function readDecision(db: Db, args: { project: string; decision: string }
       answer: parseJson<Record<string, unknown>>((d.answer as string | null) ?? null),
       consumed_at: d.consumed_at,
       invalidated_reason: d.invalidated_reason,
+      // The records and facts the question rests on as stored (D1 A.3),
+      // among them why the approved brief's policy did not act
+      // (DECISIONS item 57: policy_not_covered, policy_fix_refused).
+      evidence: parseJson<unknown>((d.evidence as string | null) ?? null),
     },
   };
 }
