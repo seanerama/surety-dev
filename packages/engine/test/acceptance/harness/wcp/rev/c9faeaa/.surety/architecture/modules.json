@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "modules": [
+    {
+      "name": "static-server",
+      "paths": ["server.mjs"],
+      "sensitive_areas": [],
+      "surface": "api",
+      "requirements": ["R1", "R2", "R3", "R4", "R5"],
+      "interfaces": [
+        {
+          "name": "get-page",
+          "kind": "http",
+          "path": "GET /",
+          "description": "Serves public/index.html with status 200 and Content-Type text/html.",
+          "consumed_by": ["web-ui"],
+          "response": { "type": "string" },
+          "errors": [
+            { "code": "405", "when": "a method other than GET or HEAD" }
+          ]
+        },
+        {
+          "name": "get-static",
+          "kind": "http",
+          "path": "GET /<file under public/>",
+          "description": "Serves a file under public/ with a Content-Type by extension (.html, .css, .mjs/.js as text/javascript, .json, .svg, .ico); nothing outside public/.",
+          "consumed_by": ["web-ui"],
+          "response": { "type": "string" },
+          "errors": [
+            { "code": "404", "when": "the file does not exist or the path escapes public/" },
+            { "code": "405", "when": "a method other than GET or HEAD" }
+          ]
+        },
+        {
+          "name": "start",
+          "kind": "cli",
+          "path": "node server.mjs",
+          "description": "Starts the server on the PORT environment variable, default 8080."
+        }
+      ]
+    },
+    {
+      "name": "planner-core",
+      "paths": ["public/js/planner.mjs"],
+      "sensitive_areas": [],
+      "surface": "library",
+      "requirements": ["R1", "R2", "R3"],
+      "interfaces": [
+        {
+          "name": "validateLength",
+          "kind": "module",
+          "path": "public/js/planner.mjs",
+          "description": "validateLength(raw) and validateQuantity(raw): return { ok: true, value } for a finite number > 0 (quantity: integer >= 1), else { ok: false, message }. Used for blade width, board and piece lengths and quantities.",
+          "consumed_by": ["web-ui", "plan-store"],
+          "request": { "type": "string" },
+          "response": {
+            "type": "object",
+            "required": ["ok"],
+            "properties": {
+              "ok": { "type": "boolean" },
+              "value": { "type": "number", "unit": "mm" },
+              "message": { "type": "string" }
+            }
+          }
+        },
+        {
+          "name": "computeLayout",
+          "kind": "module",
+          "path": "public/js/planner.mjs",
+          "description": "computeLayout(plan): places piece instances (manual placements first, then first-fit decreasing), applies the kerf rule of ADR-002 and returns per-board segments (piece, kerf, offcut) summing to each board's length, plus unplaced instances with a TOO_LONG or NO_ROOM reason and a sentence in mm.",
+          "consumed_by": ["web-ui"],
+          "request": {
+            "type": "object",
+            "required": ["version", "bladeMm", "boards", "pieces", "placements"],
+            "properties": {
+              "version": { "type": "integer", "enum": [1] },
+              "bladeMm": { "type": "number", "minimum": 0, "unit": "mm" },
+              "boards": { "type": "array", "items": { "type": "object", "required": ["id", "lengthMm"], "properties": { "id": { "type": "string" }, "lengthMm": { "type": "number", "unit": "mm" } } } },
+              "pieces": { "type": "array", "items": { "type": "object", "required": ["id", "lengthMm", "quantity", "label"], "properties": { "id": { "type": "string" }, "lengthMm": { "type": "number", "unit": "mm" }, "quantity": { "type": "integer", "minimum": 1 }, "label": { "type": "string" } } } },
+              "placements": { "type": "object" }
+            }
+          },
+          "response": {
+            "type": "object",
+            "required": ["bladeMm", "boards", "unplaced"],
+            "properties": {
+              "bladeMm": { "type": "number", "unit": "mm" },
+              "boards": { "type": "array", "items": { "type": "object", "required": ["boardId", "lengthMm", "segments", "usedMm", "freeMm"], "properties": { "boardId": { "type": "string" }, "lengthMm": { "type": "number", "unit": "mm" }, "segments": { "type": "array", "items": { "type": "object", "required": ["kind", "lengthMm"], "properties": { "kind": { "type": "string", "enum": ["piece", "kerf", "offcut"] }, "lengthMm": { "type": "number", "unit": "mm" }, "instanceId": { "type": "string" }, "pieceId": { "type": "string" }, "label": { "type": "string" }, "manual": { "type": "boolean" } } } }, "usedMm": { "type": "number", "unit": "mm" }, "freeMm": { "type": "number", "unit": "mm" } } } },
+              "unplaced": { "type": "array", "items": { "type": "object", "required": ["instanceId", "pieceId", "lengthMm", "label", "reason"], "properties": { "instanceId": { "type": "string" }, "pieceId": { "type": "string" }, "lengthMm": { "type": "number", "unit": "mm" }, "label": { "type": "string" }, "reason": { "type": "object", "required": ["code", "message"], "properties": { "code": { "type": "string", "enum": ["TOO_LONG", "NO_ROOM"] }, "message": { "type": "string" } } } } } }
+            }
+          }
+        },
+        {
+          "name": "checkMove",
+          "kind": "module",
+          "path": "public/js/planner.mjs",
+          "description": "checkMove(plan, layout, instanceId, boardId): whether the instance fits the target board's current pieces excluding itself; applyMove(plan, instanceId, boardId) returns a new plan with placements[instanceId] = boardId.",
+          "consumed_by": ["web-ui"],
+          "request": {
+            "type": "object",
+            "required": ["instanceId", "boardId"],
+            "properties": { "instanceId": { "type": "string" }, "boardId": { "type": "string" } }
+          },
+          "response": {
+            "type": "object",
+            "required": ["ok"],
+            "properties": { "ok": { "type": "boolean" }, "message": { "type": "string" } }
+          },
+          "errors": [
+            { "code": "NO_ROOM", "when": "the piece plus one kerf does not fit the space left on the target board; the message gives piece length, kerf and space left in mm" },
+            { "code": "UNKNOWN", "when": "the instance or board does not exist" }
+          ]
+        },
+        {
+          "name": "plan-edits",
+          "kind": "module",
+          "path": "public/js/planner.mjs",
+          "description": "emptyPlan(), addBoard, updateBoard, removeBoard, addPiece, updatePiece, removePiece, setBlade: pure functions returning a new plan; removing a board or lowering a quantity drops placements that no longer apply.",
+          "consumed_by": ["web-ui", "plan-store"]
+        }
+      ]
+    },
+    {
+      "name": "plan-store",
+      "paths": ["public/js/store.mjs"],
+      "sensitive_areas": [],
+      "surface": "library",
+      "requirements": ["R4"],
+      "interfaces": [
+        {
+          "name": "saved-plan",
+          "kind": "file",
+          "path": "localStorage[\"cutPlanner.plan\"]",
+          "description": "One JSON value in the shape of spec §9: { version: 1, bladeMm, boards[{id,lengthMm}], pieces[{id,lengthMm,quantity,label}], placements{instanceId: boardId} }.",
+          "consumed_by": ["web-ui"]
+        },
+        {
+          "name": "loadPlan",
+          "kind": "module",
+          "path": "public/js/store.mjs",
+          "description": "loadPlan(storage = localStorage): the saved plan, or the empty plan when missing, unparsable or malformed; never throws. savePlan(plan, storage) writes it; clearPlan(storage) removes it. Storage exceptions are caught and reported as { ok: false }.",
+          "consumed_by": ["web-ui"],
+          "response": { "type": "object" },
+          "errors": [
+            { "code": "STORAGE_UNAVAILABLE", "when": "localStorage throws on read or write; the plan still works in memory" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "web-ui",
+      "paths": ["public/index.html", "public/styles.css", "public/js/app.mjs"],
+      "sensitive_areas": [],
+      "surface": "ui",
+      "requirements": ["R1", "R2", "R3", "R4", "R5"],
+      "targets": [
+        { "target": "web", "ui_technology": "html_css" }
+      ],
+      "interfaces": [
+        {
+          "name": "planner-page",
+          "kind": "file",
+          "path": "public/index.html",
+          "description": "The single page: blade width, boards and pieces forms and lists, layout bars, unplaced panel with add-board, move controls, clear-plan, print cut sheet, and a hidden cut-sheet section shown by the print stylesheet. Elements carry data-board-id, data-kind, data-length-mm and data-instance-id for checks."
+        }
+      ]
+    },
+    {
+      "name": "tests",
+      "paths": ["tests/"],
+      "sensitive_areas": [],
+      "surface": "none",
+      "interfaces": [
+        {
+          "name": "run-tests",
+          "kind": "cli",
+          "path": "node --test tests/",
+          "description": "Unit tests of planner-core and plan-store and a smoke test of static-server, Node built-ins only."
+        }
+      ]
+    }
+  ],
+  "mapping_from_spec": [
+    { "spec_module": "Static server", "to": ["static-server"] },
+    { "spec_module": "Web client", "to": ["planner-core", "plan-store", "web-ui"] },
+    { "spec_module": "Tests", "to": ["tests"] }
+  ]
+}

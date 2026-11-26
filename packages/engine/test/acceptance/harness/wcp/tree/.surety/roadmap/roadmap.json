@@ -1,0 +1,67 @@
+{
+  "version": 2,
+  "architecture_version": 2,
+  "phases": [
+    {
+      "number": 1,
+      "goal": "The complete Workshop Cut Planner prototype: entry of blade width, boards and pieces in mm; to-scale kerf-aware layout; unplaced explanations with add-board and move; local-storage persistence with clear-plan; printable cut sheet.",
+      "modules": [
+        "static-server",
+        "planner-core",
+        "plan-store",
+        "web-ui",
+        "tests"
+      ],
+      "requirement_ids": [],
+      "depends_on": []
+    },
+    {
+      "number": 2,
+      "goal": "Iteration 2: a millimetres/inches selector; entry, layout, unplaced explanations, move refusals and the cut sheet in the selected unit with lengths kept in millimetres; the selected unit saved and restored, and iteration 1 plans reopening unchanged in millimetres.",
+      "modules": [
+        "planner-core",
+        "plan-store",
+        "units",
+        "web-ui",
+        "tests"
+      ],
+      "requirement_ids": [
+        "R1",
+        "R2",
+        "R3",
+        "R4",
+        "R5"
+      ],
+      "depends_on": [
+        1
+      ]
+    }
+  ],
+  "moved_requirements": [
+    {
+      "key": "R1",
+      "from": 1,
+      "to": 2
+    },
+    {
+      "key": "R2",
+      "from": 1,
+      "to": 2
+    },
+    {
+      "key": "R3",
+      "from": 1,
+      "to": 2
+    },
+    {
+      "key": "R4",
+      "from": 1,
+      "to": 2
+    },
+    {
+      "key": "R5",
+      "from": 1,
+      "to": 2
+    }
+  ]
+}

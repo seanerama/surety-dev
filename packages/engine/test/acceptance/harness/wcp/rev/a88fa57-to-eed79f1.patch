@@ -1,0 +1,240 @@
+diff --git a/public/js/app.mjs b/public/js/app.mjs
+index 76c1e59117745dbaef2faddc02628ab157184f55..7a7c950362f6c6a82c490d54768a7fa42dd4548e 100644
+--- a/public/js/app.mjs
++++ b/public/js/app.mjs
+@@ -9,11 +9,10 @@ import {
+   validateQuantity, computeLayout, checkMove, applyMove,
+ } from './planner.mjs';
+ import { parseLength, formatNumber, formatLength, unitSymbol, unitName, normalizeUnit } from './units.mjs';
+-import { loadPlan, savePlan, clearPlan, loadUnit, saveUnit } from './store.mjs';
++import { loadPlan, savePlan, clearPlan } from './store.mjs';
+ 
+ let plan = emptyPlan();
+-// The selected unit: how lengths are entered and shown, never part of the
+-// plan; saved on its own under cutPlanner.unit.
++// The selected unit: how lengths are entered and shown, never part of the plan.
+ let unit = 'mm';
+ // A refused move: { instanceId, message }, shown next to its control until
+ // the next change of the plan.
+@@ -185,7 +184,7 @@ function moveControl(layout, instanceId, currentBoardId) {
+   sel.addEventListener('change', () => {
+     const target = sel.value;
+     if (!target || target === currentBoardId) return;
+-    const r = checkMove(plan, layout, instanceId, target, unit);
++    const r = checkMove(plan, layout, instanceId, target);
+     if (r.ok) { update(applyMove(plan, instanceId, target)); return; }
+     moveNote = { instanceId, message: r.message };
+     renderLayout();
+@@ -227,37 +226,31 @@ function renderUnplaced(layout) {
+   $('unplaced-section').hidden = layout.unplaced.length === 0;
+ }
+ 
+-const sheetPiece = (len, label) => `${showLen(len)}${label ? ' — ' + label : ''}`;
+-
+-// The printable cut sheet, from the same layout and unit as the bars. It
+-// opens with the unit every length on it is given in.
++// The printable cut sheet, from the same layout as the bars.
+ function renderCutSheet(layout) {
+   const body = $('cut-sheet-body');
+-  const parts = [
+-    el('p', { class: 'sheet-unit', text: `All lengths in ${unitName(unit)} (${unitSymbol(unit)}).` }),
+-    el('p', { class: 'sheet-blade', text: `Blade width (kerf): ${showLen(layout.bladeMm)}` }),
+-  ];
++  const parts = [el('p', { class: 'sheet-blade', text: `Blade width (kerf): ${layout.bladeMm} mm` })];
+   if (!layout.boards.length) parts.push(el('p', { text: 'No boards in the plan.' }));
+   layout.boards.forEach((b, i) => {
+     const placed = b.segments.filter((s) => s.kind === 'piece');
+     const offcut = b.segments.find((s) => s.kind === 'offcut');
+     parts.push(el('div', { class: 'sheet-board' },
+-      el('h3', { text: `Board ${i + 1}: ${showLen(b.lengthMm)}` }),
++      el('h3', { text: `Board ${i + 1}: ${b.lengthMm} mm` }),
+       placed.length
+-        ? el('ol', { class: 'sheet-cuts' }, ...placed.map((s) => el('li', { text: sheetPiece(s.lengthMm, s.label) })))
++        ? el('ol', { class: 'sheet-cuts' }, ...placed.map((s) => el('li', { text: `${s.lengthMm} mm${s.label ? ' — ' + s.label : ''}` })))
+         : el('p', { text: 'No pieces cut from this board.' }),
+-      el('p', { class: 'sheet-offcut', text: `Offcut: ${showLen(offcut ? offcut.lengthMm : 0)}` })));
++      el('p', { class: 'sheet-offcut', text: `Offcut: ${offcut ? offcut.lengthMm : 0} mm` })));
+   });
+   if (layout.unplaced.length) {
+     parts.push(el('div', { class: 'sheet-unplaced' },
+       el('h3', { text: 'Unplaced pieces' }),
+-      el('ul', {}, ...layout.unplaced.map((u) => el('li', { text: `${sheetPiece(u.lengthMm, u.label)}: ${u.reason.message}` })))));
++      el('ul', {}, ...layout.unplaced.map((u) => el('li', { text: `${u.lengthMm} mm${u.label ? ' — ' + u.label : ''}: ${u.reason.message}` })))));
+   }
+   body.replaceChildren(...parts);
+ }
+ 
+ function renderLayout() {
+-  const layout = computeLayout(plan, unit);
++  const layout = computeLayout(plan);
+   renderBoardsLayout(layout);
+   renderUnplaced(layout);
+   renderCutSheet(layout);
+@@ -284,8 +277,6 @@ function renderUnit() {
+ function wireUnit() {
+   $('unit').addEventListener('change', (e) => {
+     unit = normalizeUnit(e.target.value);
+-    const r = saveUnit(unit);
+-    notice(r.ok ? '' : `${r.message} The unit stays selected on this page until you close it.`);
+     moveNote = null;
+     renderUnit();
+     renderBlade();
+@@ -354,7 +345,6 @@ function wireToolbar() {
+ 
+ function start() {
+   plan = loadPlan();
+-  unit = loadUnit();
+   wireUnit();
+   wireBlade();
+   wireAddBoard('add-board-form', 'new-board-length');
+diff --git a/public/js/planner.mjs b/public/js/planner.mjs
+index 20202750e69fe150874a524332a5b5e789ea2ea7..cd5298112bc7586d88f17fe221efb97f6d3e7409 100644
+--- a/public/js/planner.mjs
++++ b/public/js/planner.mjs
+@@ -1,8 +1,6 @@
+ // planner-core: pure, DOM-free planning functions (ADR-002). Every function
+ // returns new objects and never mutates its arguments.
+ 
+-import { formatLength } from './units.mjs';
+-
+ const DEFAULT_BLADE_MM = 3;
+ 
+ // Rounds away floating-point noise so that segment lengths add up exactly.
+@@ -168,16 +166,13 @@ export function boardSegments(boardLengthMm, pieces, bladeMm) {
+ 
+ function plural(n, one, many) { return n === 1 ? one : many; }
+ 
+-// Reasons keep their lengths in millimetres; the sentence gives each one in
+-// the selected unit, converted from its own mm value (ADR-003).
+-function unplacedReason(inst, boards, bladeMm, unit) {
+-  const L = (x) => formatLength(x, unit);
++function unplacedReason(inst, boards, bladeMm) {
+   const longest = boards.reduce((m, b) => Math.max(m, b.lengthMm), 0);
+   if (!boards.length) {
+-    return { code: 'TOO_LONG', pieceMm: inst.lengthMm, longestMm: 0, message: `Piece ${L(inst.lengthMm)} has no board to be cut from: add a board.` };
++    return { code: 'TOO_LONG', message: `Piece ${inst.lengthMm} mm has no board to be cut from: add a board.` };
+   }
+   if (inst.lengthMm > longest) {
+-    return { code: 'TOO_LONG', pieceMm: inst.lengthMm, longestMm: longest, message: `Piece ${L(inst.lengthMm)} is longer than the longest board (${L(longest)}).` };
++    return { code: 'TOO_LONG', message: `Piece ${inst.lengthMm} mm is longer than the longest board (${longest} mm).` };
+   }
+   let best = null;
+   for (const b of boards) {
+@@ -190,22 +185,13 @@ function unplacedReason(inst, boards, bladeMm, unit) {
+   const piecesMm = sum(lengths);
+   const kerfMm = mm(cuts * bladeMm);
+   const needMm = mm(piecesMm + kerfMm);
+-  const boardMm = best.b.lengthMm;
+   return {
+     code: 'NO_ROOM',
+-    pieceMm: inst.lengthMm,
+-    boardId: best.b.boardId,
+-    boardMm,
+-    needMm,
+-    piecesMm,
+-    kerfMm,
+-    cuts,
+-    message: `These ${n} ${plural(n, 'piece', 'pieces')} need ${L(needMm)} (${L(piecesMm)} of pieces plus ${L(kerfMm)} for ${cuts} ${plural(cuts, 'cut', 'cuts')}) but the board is ${L(boardMm)}.`,
++    message: `These ${n} ${plural(n, 'piece', 'pieces')} need ${needMm} mm (${piecesMm} mm of pieces plus ${kerfMm} mm for ${cuts} ${plural(cuts, 'cut', 'cuts')}) but the board is ${best.b.lengthMm} mm.`,
+   };
+ }
+ 
+-// The unit only words the unplaced reasons; placement never depends on it.
+-export function computeLayout(plan, unit = 'mm') {
++export function computeLayout(plan) {
+   const bladeMm = plan.bladeMm;
+   const boards = plan.boards.map((b) => ({ boardId: b.id, lengthMm: b.lengthMm, items: [] }));
+   const byId = new Map(boards.map((b) => [b.boardId, b]));
+@@ -232,7 +218,7 @@ export function computeLayout(plan, unit = 'mm') {
+   // 3. What is left is unplaced.
+   const unplaced = left
+     .sort((a, b) => a.order - b.order)
+-    .map((inst) => ({ instanceId: inst.instanceId, pieceId: inst.pieceId, lengthMm: inst.lengthMm, label: inst.label, reason: unplacedReason(inst, boards, bladeMm, unit) }));
++    .map((inst) => ({ instanceId: inst.instanceId, pieceId: inst.pieceId, lengthMm: inst.lengthMm, label: inst.label, reason: unplacedReason(inst, boards, bladeMm) }));
+ 
+   return {
+     bladeMm,
+@@ -249,10 +235,8 @@ export function computeLayout(plan, unit = 'mm') {
+ // ---------------------------------------------------------------- moves
+ 
+ // Whether an instance fits the target board's current pieces, itself
+-// excluded. A refusal names the piece length, the kerf and the space left,
+-// in the given unit.
+-export function checkMove(plan, layout, instanceId, boardId, unit = 'mm') {
+-  const L = (x) => formatLength(x, unit);
++// excluded. A refusal names the piece length, the kerf and the space left.
++export function checkMove(plan, layout, instanceId, boardId) {
+   const inst = expandInstances(plan).find((i) => i.instanceId === instanceId);
+   if (!inst) return { ok: false, message: 'That piece is no longer in the plan.' };
+   const index = layout.boards.findIndex((b) => b.boardId === boardId);
+@@ -261,15 +245,15 @@ export function checkMove(plan, layout, instanceId, boardId, unit = 'mm') {
+   const others = board.segments.filter((s) => s.kind === 'piece' && s.instanceId !== instanceId).map((s) => s.lengthMm);
+   const bladeMm = plan.bladeMm;
+   if (fits(board.lengthMm, others, inst.lengthMm, bladeMm)) return { ok: true };
+-  const name = `board ${index + 1} (${L(board.lengthMm)})`;
++  const name = `board ${index + 1} (${board.lengthMm} mm)`;
+   const left = Math.max(0, spaceLeft(board.lengthMm, others, bladeMm));
+   if (!others.length) {
+-    return { ok: false, message: `Piece ${L(inst.lengthMm)} does not fit on ${name}: only ${L(left)} is left on it (blade kerf ${L(bladeMm)}).` };
++    return { ok: false, message: `Piece ${inst.lengthMm} mm does not fit on ${name}: only ${left} mm is left on it (blade kerf ${bladeMm} mm).` };
+   }
+   const k = others.length;
+   return {
+     ok: false,
+-    message: `Piece ${L(inst.lengthMm)} does not fit on ${name}: after its ${k} ${plural(k, 'piece', 'pieces')} (${L(sum(others))}) and a ${L(bladeMm)} kerf for each of ${k} ${plural(k, 'cut', 'cuts')}, only ${L(left)} is left.`,
++    message: `Piece ${inst.lengthMm} mm does not fit on ${name}: after its ${k} ${plural(k, 'piece', 'pieces')} (${sum(others)} mm) and a ${bladeMm} mm kerf for each of ${k} ${plural(k, 'cut', 'cuts')}, only ${left} mm is left.`,
+   };
+ }
+ 
+diff --git a/public/js/store.mjs b/public/js/store.mjs
+index 6404efbb843bca0919d7996e9803dc466c317626..dd5c44b5b3351dd7c3f4827caaefe978ae986937 100644
+--- a/public/js/store.mjs
++++ b/public/js/store.mjs
+@@ -1,11 +1,9 @@
+ // plan-store: the plan in this browser's local storage (ADR-001), one JSON
+-// value under cutPlanner.plan in the shape of spec §9, and the selected unit
+-// on its own under cutPlanner.unit (ADR-003). Never throws.
++// value under cutPlanner.plan in the shape of spec §9. Never throws.
+ 
+ import { emptyPlan } from './planner.mjs';
+ 
+ export const KEY = 'cutPlanner.plan';
+-export const UNIT_KEY = 'cutPlanner.unit';
+ 
+ function defaultStorage() {
+   try { return globalThis.localStorage ?? null; } catch { return null; }
+@@ -70,22 +68,3 @@ export function clearPlan(storage = defaultStorage()) {
+     return { ok: false, message: `The saved plan could not be removed (${e && e.message ? e.message : e}).` };
+   }
+ }
+-
+-// The saved unit: 'in' only when exactly that is saved, else 'mm'.
+-export function loadUnit(storage = defaultStorage()) {
+-  try {
+-    return storage && storage.getItem(UNIT_KEY) === 'in' ? 'in' : 'mm';
+-  } catch {
+-    return 'mm';
+-  }
+-}
+-
+-export function saveUnit(unit, storage = defaultStorage()) {
+-  try {
+-    if (!storage) return { ok: false, message: 'Local storage is not available in this browser.' };
+-    storage.setItem(UNIT_KEY, unit === 'in' ? 'in' : 'mm');
+-    return { ok: true };
+-  } catch (e) {
+-    return { ok: false, message: `The unit could not be saved in this browser (${e && e.message ? e.message : e}).` };
+-  }
+-}
+diff --git a/public/styles.css b/public/styles.css
+index db9df09877f330f79a976378fe184e0d930d7e10..b12b4e14bf1df888a3bd33ab05aaa69cbfd44abf 100644
+--- a/public/styles.css
++++ b/public/styles.css
+@@ -170,7 +170,6 @@ button.danger:hover { background: #fbeaea; }
+   .cut-sheet h2 { font-size: 1.2rem; margin: 0 0 0.5rem; }
+   .cut-sheet h3 { font-size: 1rem; margin: 0.75rem 0 0.25rem; }
+   .sheet-board, .sheet-unplaced { break-inside: avoid; }
+-  .sheet-unit { margin: 0 0 0.5rem; font-weight: 600; }
+   .sheet-cuts { margin: 0; }
+   .sheet-offcut { margin: 0.2rem 0 0; }
+ }
