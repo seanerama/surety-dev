@@ -393,7 +393,7 @@
     "design_verdicts": 172800
   },
   "project": {
-    "$comment": "Ungoverned project keys, held in .surety/policy.json and changed through POST /v1/projects/:p/policy (D1 §11.4; RN R2). Governed keys (protected_paths, check_commands, check_discovery, runner_config, result_collection, required_checks) live in .surety/checks/protected-policy.json and are not listed here. One approval of an ordinary maintenance brief (DECISIONS item 57; the owner's ruling D8 of 2026-11-26; objection 234) adds the opt-in preparation allowance: `prototype_preparation_allowance` (`off`, `per_iteration`; default `off`; granting it is a widening), `prototype_preparation_run_tokens` (the allowance's run token limit: 1,500,000 within 10,000 to 50,000,000; raising it widens) and `prototype_preparation_usd_estimated` (its estimated cost ceiling: 15 USD within 0 to 10,000, not an integer; raising it widens), and the key `prototype_preparation_model` (`<provider>/<model>`; any change widens while the allowance is granted), which has no default and so is absent from the effective policy until set: it is therefore not listed here, where every key is read with its default.",
+    "$comment": "Ungoverned project keys, held in .surety/policy.json and changed through POST /v1/projects/:p/policy (D1 §11.4; RN R2). Governed keys (protected_paths, check_commands, check_discovery, runner_config, result_collection, required_checks) live in .surety/checks/protected-policy.json and are not listed here. One approval of an ordinary maintenance brief (DECISIONS item 57; the owner's ruling D8 of 2026-11-26; objection 234) adds the opt-in preparation allowance: `prototype_preparation_allowance` (`off`, `per_iteration`; default `off`; granting it is a widening), `prototype_preparation_run_tokens` (the allowance's run token limit: 1,500,000 within 10,000 to 50,000,000; raising it widens) and `prototype_preparation_usd_estimated` (its estimated cost ceiling: 15 USD within 0 to 10,000, not an integer; raising it widens), and the key `prototype_preparation_model` (`<provider>/<model>`; any change widens while the allowance is granted), whose default is null (none: no model is allowed until the owner names one); as every key here it is read with its default, so the effective policy serves it null until it is set.",
     "max_chained_roles": {
       "default": 24,
       "min": 1,
@@ -894,6 +894,10 @@
         "per_iteration"
       ],
       "unit": "PreparationAllowance"
+    },
+    "prototype_preparation_model": {
+      "default": null,
+      "unit": "provider_model"
     },
     "prototype_preparation_run_tokens": {
       "default": 1500000,
