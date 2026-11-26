@@ -460,6 +460,30 @@ const envelope = (db: Db) => ({
 });
 
 // GET /v1/projects/:p/protected-versions/:v
+function proposalOfVersion(db: Db, id: string | null) {
+  if (id === null) return null;
+  const p = db.prepare('SELECT "id", "run", "proposed_by", "base_revision", "tree_id", "classified_tree", "diff_hash", "rationale", "classified_change_kind", "approver", "approver_authority", "approved_at", "affected_checks" FROM "protected_proposals" WHERE "id" = ?').get(id) as
+    | Record<string, unknown>
+    | undefined;
+  if (!p) return null;
+  const delegated = db.prepare(`SELECT "id", "authorized_by_kind", "authorized_by", "performed_by" FROM "delegated_actions" WHERE "kind" = 'tightening_applied' AND "subject_type" = 'protected_proposal' AND "subject_id" = ?`).get(id) as
+    | { id: string; authorized_by_kind: string; authorized_by: string | null; performed_by: string }
+    | undefined;
+  return {
+    id: p.id,
+    run: p.run,
+    proposed_by: p.proposed_by,
+    change_kind: p.classified_change_kind,
+    approver: p.approver,
+    approver_authority: p.approver_authority,
+    approved_at: p.approved_at,
+    affected_checks: JSON.parse((p.affected_checks as string | null) ?? '[]') as unknown,
+    rationale: p.rationale,
+    diff: { base_revision: p.base_revision, tree: p.tree_id, classified_tree: p.classified_tree ?? null, diff_hash: p.diff_hash },
+    delegated_action: delegated ? { id: delegated.id, authorized_by: { kind: delegated.authorized_by_kind, id: delegated.authorized_by }, performed_by: delegated.performed_by } : null,
+  };
+}
+
 export function readVersion(db: Db, args: { project: string; version: string }) {
   const head = envelope(db);
   const v = db.prepare('SELECT * FROM "protected_versions" WHERE "id" = ?').get(args.version) as Record<string, unknown> | undefined;
@@ -474,6 +498,13 @@ export function readVersion(db: Db, args: { project: string; version: string }) 
       // manifest is shown as none.
       fingerprint: v.fingerprint_scheme === 'manifest' ? v.fingerprint : null,
       change_kind: v.change_kind,
+      // D2 (DECISIONS item 57): who approved it and on what authority, and
+      // the proposal it applied with its diff (from its base revision to its
+      // tree, the diff hash binding it), so a tightening the brief's policy
+      // applied stays readable; null for a version no proposal made.
+      approved_by: v.approved_by,
+      approver_authority: v.approver_authority,
+      proposal: proposalOfVersion(db, v.proposal as string | null),
       governed: v.governed === null ? null : JSON.parse(v.governed as string),
       discovery_errors: JSON.parse(v.discovery_errors as string),
       checks: checks.map((c) => ({
