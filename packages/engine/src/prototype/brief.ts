@@ -51,6 +51,7 @@ import { policyRevision, projectPolicy } from '../store/transitions/settings.js'
 import { requestedModelOf } from '../store/transitions/requested-model.js';
 import { PROVIDER_REFUSAL_NEXT_STEP, UNKNOWN_NEXT_STEP, effectiveAllowanceOf, endProviderHold, providerHoldOf, providerRefusalReason, unresolvedAccounting } from '../store/transitions/prototype.js';
 import type { Tx } from '../store/transitions/tx.js';
+import { syncClockExclusions } from '../store/transitions/prototype-clock.js';
 import { type WorkRow, getWorkItem, observeTrigger, transitionWork } from '../store/transitions/work.js';
 import type { BundleContent } from '../plan/bundle.js';
 import type { PlanCheckResult } from '../plan/check.js';
@@ -989,6 +990,8 @@ export function syncIterationStatuses(tx: Tx): number {
         want = { status: 'building', next: unpublished === null ? 'none: building' : firstPlanUnpublishedStep(unpublished), reason: null, ended: false };
       }
     }
+    // D5 (DECISIONS item 57): the clock's parked and stall intervals follow.
+    syncClockExclusions(tx, it, parked ? { id: parked.id, blocker: parked.blocker } : null);
     if (it.status === want.status && it.next_step === want.next && (it.outcome_reason ?? null) === want.reason) continue;
     if (!SYNCED.includes(it.status)) continue;
     setStatus(tx, it, want.status, want.next, { reason: want.reason, ended: want.ended });
