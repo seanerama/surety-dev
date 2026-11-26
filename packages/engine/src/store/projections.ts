@@ -6,6 +6,7 @@
 // `snapshot_seq`, the highest event sequence of the snapshot it was read
 // from.
 
+import { restoredOf } from './transitions/restore.js';
 import type { Database } from 'better-sqlite3';
 
 import { nowIso, nowMs } from '../clock.js';
@@ -1287,7 +1288,7 @@ export function readOneEnvironment(db: Db, args: { project: string; environment:
   // The engine's file-serving check beside it, as the project read's entry
   // serves it (DECISIONS item 42; M626).
   const serving_check = servingCheckStatus(db, args.project, read.environment.id, compatibility.output_kind);
-  return { ...envelope(db), ...read, environment: { ...read.environment, serving_check, deployment_compatibility: { ...compatibility, environments: own } } };
+  return { ...envelope(db), ...read, environment: { ...read.environment, serving_check, deployment_compatibility: { ...compatibility, environments: own }, restored: restoredOf(db, read.environment.id) } };
 }
 
 // GET /v1/projects/:p/environments/:e/logs (D4 §6.1, A.8; SEAM.md §294):

@@ -1043,6 +1043,28 @@ export function createApiServer(state: EngineState, opts: ApiOptions): http.Serv
           },
         };
       }
+      // WO1 Q1 (DECISIONS item 57; closes item 54): the iteration's Alpha
+      // restored, authorized against the scope that qualified it and the
+      // current environment authorization (store/transitions/restore.ts).
+      // Body {environment?, preview_hash?}: the environment that Alpha was
+      // deployed to by default; preview_hash confirms D4's decision when the
+      // environment is outside the current brief's target.
+      if (rest.length === 3 && rest[0] === 'iterations' && rest[2] === 'restore' && post) {
+        const iteration = decodeSegment(rest[1]!);
+        if (iteration === null) return null;
+        return {
+          kind: 'prepared',
+          name: 'iteration.restore',
+          prepare: async (b) => {
+            const body = onlyFields(b, ['environment', 'preview_hash']);
+            const facts = await store().call<{ candidate: string; environment: string }>('read', { name: 'iteration.restore_facts', args: { project, iteration, environment: body.environment } });
+            const prepared = (await prepareDeployment(runtime(), project, { candidate: facts.candidate, environment: facts.environment, ...(body.preview_hash !== undefined ? { preview_hash: body.preview_hash } : {}) })) as Record<string, unknown>;
+            prepared.restore = { iteration };
+            return prepared;
+          },
+          settle: (prepared) => settleDeployment(runtime(), prepared),
+        };
+      }
       // Slice E4 (R7, R8): Iterate. A new iteration continuing from this
       // one, with the owner's optional short change request; its
       // preparation's authorization raised; nothing is dispatched.

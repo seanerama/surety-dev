@@ -213,6 +213,7 @@ import { observeHost, paceView } from '../plan/pace.js';
 import { iterationReceipt, listIterations, readIteration } from '../prototype/iterations.js';
 import { briefFacts, requestPreparation } from '../prototype/brief.js';
 import { askTarget, confirmTarget } from './transitions/deploy-target.js';
+import { restoreFacts } from './transitions/restore.js';
 import { iterate } from '../prototype/iterate.js';
 import { askOfSession, enforceIterationLimit, resumeIteration, retryIteration, runsUnderWay } from './transitions/prototype.js';
 import { applicationFacts as specApplicationFacts, beginApplication as beginSpecApplication, refuseApplication as refuseSpecApplication, correctRequestAgain, correctionFacts, impactRead, intendProposal, registerDeliveryReplans, requestSpecChange } from '../spec/change.js';
@@ -373,6 +374,8 @@ const COMMANDS: Record<string, (tx: Tx, args: any) => CommandResult> = {
   // cancelled correction again.
   'spec.correct': (tx, a: { project: string; request: string }) => correctRequestAgain(tx, a),
   'deployment.request': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'human' }, (t, e) => evaluateGate(t, e as never)),
+  // WO1 Q1 (DECISIONS item 57): an earlier Alpha restored.
+  'iteration.restore': (tx, a) => requestDeployment(tx, { ...a, requested_by: 'human' }, (t, e) => evaluateGate(t, e as never)),
   // DECISIONS item 43 (M627): the owner asks for the checks the deployment
   // gate lacks that a Verifier writes; nothing is deployed.
   'environment.request_checks': (tx, a) => ({ ...requestEnvironmentChecks(tx, a), effects: [{ kind: 'tick' }] }),
@@ -429,6 +432,10 @@ const READS: Record<string, (db: Database.Database, args: any) => unknown> = {
   'checks.execution': (d, a: { execution: string }) => d.prepare('SELECT * FROM "check_executions" WHERE "id" = ?').get(a.execution) ?? null,
   'work.list': (d, a) => readWork(d, a),
   'decision.read': (d, a) => readDecision(d, a),
+  'iteration.restore_facts': (d, a: { project: string; iteration: string; environment?: unknown }) => {
+    const f = restoreFacts(d, a);
+    return { candidate: f.candidate, environment: f.environment };
+  },
   'operations.list': (d, a) => readOperations(d, a),
   'environment.read': (d, a) => readOneEnvironment(d, a),
   'environment.logs': (d, a) => readEnvironmentLogs(d, a),

@@ -943,6 +943,10 @@ export function readIteration(db: Db, args: { project: string; iteration: string
       current_state: alphaNowState.state,
       current_reason: alphaNowState.reason,
       history_note: ALPHA_HISTORY_NOTE,
+      // WO1 Q1 (DECISIONS item 57): the latest restore of this iteration's
+      // Alpha, as requested and as it ended; null when never restored. A
+      // restore is no later iteration's Alpha.
+      restored: restoreOfIteration(db, it.id),
     },
   };
 }
@@ -962,6 +966,15 @@ function planOf(db: Db, it: IterationRow) {
   const b = db.prepare('SELECT "status", "approvals" FROM "plan_bundles" WHERE "id" = ?').get(it.plan_bundle) as { status: string; approvals: string } | undefined;
   const p = it.phase_plan === null ? undefined : (db.prepare('SELECT "routing", "approved_by" FROM "phase_plans" WHERE "id" = ?').get(it.phase_plan) as { routing: string | null; approved_by: string | null } | undefined);
   return { bundle: it.plan_bundle, bundle_status: b?.status ?? null, approvals: parseJson<Record<string, unknown>>(b?.approvals ?? null), phase_plan: it.phase_plan, routing: p?.routing ?? null, approved_by: p?.approved_by ?? null };
+}
+
+function restoreOfIteration(db: Db, iteration: string) {
+  const r = db
+    .prepare(`SELECT d."id", d."created_at", d."outcome", d."restore", e."name" FROM "deployment_requests" d JOIN "environments" e ON e."id" = d."environment" WHERE json_extract(d."restore", '$.iteration_id') = ? ORDER BY d.rowid DESC LIMIT 1`)
+    .get(iteration) as { id: string; created_at: string; outcome: string; restore: string; name: string } | undefined;
+  if (!r) return null;
+  const done = db.prepare(`SELECT o."finalized_at" FROM "operations" o JOIN "deployment_requests" d ON d."authorization" = o."authorization" WHERE d."id" = ? ORDER BY o.rowid DESC LIMIT 1`).get(r.id) as { finalized_at: string | null } | undefined;
+  return { request: r.id, environment: r.name, requested_at: r.created_at, outcome: r.outcome, restored_at: r.outcome === 'deployed' ? (done?.finalized_at ?? null) : null, ...parseJson<Record<string, unknown>>(r.restore) };
 }
 
 // GET /v1/projects/:p/iterations/:i/receipt.json: the iteration read with
