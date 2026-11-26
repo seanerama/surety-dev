@@ -1,0 +1,16 @@
+diff --git a/public/styles.css b/public/styles.css
+index db9df09877f330f79a976378fe184e0d930d7e10..dcbd10145ab0d3bbed7b6ffe5ff74c96311c83ca 100644
+--- a/public/styles.css
++++ b/public/styles.css
+@@ -150,9 +150,10 @@ button.danger:hover { background: #fbeaea; }
+   :root { color: #000; background: #fff; }
+   body { background: #fff; }
+   input, select, textarea, button { display: none !important; }
+-  .editor, .toolbar, .notice, .intro, .unit-choice, .moves, .unplaced-panel, .add-form { display: none !important; }
++  .editor, .toolbar, .notice, .unit-choice, .moves, .unplaced-panel, .add-form { display: none !important; }
+   main { display: block; padding: 0; }
+   .page-header { padding: 0 0 0.5rem; }
++  .intro { color: #000; font-weight: 600; margin: 0.25rem 0 0; }
+   .panel { border: 0; padding: 0; background: #fff; }
+   .legend { color: #000; }
+   .swatch { border-color: #000; }

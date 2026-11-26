@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "key": "smoke-server",
+  "kind": "smoke",
+  "origin": "acceptance",
+  "command": [
+    "node",
+    ".surety/checks/run/smoke.mjs"
+  ],
+  "cwd": ".",
+  "timeout_s": 120,
+  "gate_kinds": [
+    "stage",
+    "alpha_authorize"
+  ],
+  "inputs": [
+    ".surety/checks/run/smoke.mjs"
+  ]
+}

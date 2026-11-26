@@ -1,0 +1,25 @@
+{
+  "protected_paths": [
+    ".surety/checks/"
+  ],
+  "check_discovery": {
+    "definitions": ".surety/checks/defs/"
+  },
+  "check_commands": {
+    "node": {
+      "path": "/home/smahoney/.nvm/versions/node/v22.22.0/bin/node"
+    }
+  },
+  "runner_config": {
+    "direct": {
+      "read_paths": [
+        "/home/smahoney/.nvm/versions/node/v22.22.0"
+      ],
+      "path": [
+        "/home/smahoney/.nvm/versions/node/v22.22.0/bin",
+        "/usr/bin",
+        "/bin"
+      ]
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "phase": 1,
+  "prepared_against": {
+    "spec_version": 1,
+    "architecture_version": 1,
+    "roadmap_version": 1,
+    "revision": "b7c6fc71d7fda25cabd1693048d075709cffbee1"
+  },
+  "stages": [
+    {
+      "number": 1,
+      "goal": "Serve the planner page and let the woodworker enter blade width, boards and pieces in mm, with validation, and see each board drawn to scale with pieces, kerf marks and offcut.",
+      "tasks": [
+        "server.mjs: dependency-free static server per architecture §7 (GET / -> public/index.html, files under public/ with content types incl. .mjs as text/javascript, 404 for missing or escaping paths, 405 for other methods, PORT default 8080).",
+        "public/js/planner.mjs: emptyPlan, plan edit functions (addBoard, updateBoard, removeBoard, addPiece, updatePiece, removePiece, setBlade), validateLength/validateQuantity, instance expansion, kerf rule and computeLayout per ADR-002 (first-fit decreasing; manual placements honoured when present), segments summing to board length.",
+        "public/index.html, public/styles.css, public/js/app.mjs: blade width field, boards list with add-board, pieces list with add-piece (length, quantity, optional label), every length labelled mm; inline editing and removal re-rendering at once; field messages for zero, negative or non-numeric values with the last valid value kept out of the layout; to-scale board bars with piece (length + label), kerf and offcut segments and data-* attributes; re-render on blade change.",
+        "tests/: node:test unit tests for validation and computeLayout (R2.1: 2400/3/2x800 -> two kerfs 3 mm, offcut 794 mm; R2.3: two 2400 boards, three 800 pieces all placed, segments sum to board length) and a smoke test starting server.mjs on a free port and fetching /, /styles.css and /js/app.mjs."
+      ],
+      "modules": ["static-server", "planner-core", "web-ui", "tests"],
+      "implements": ["R1", "R2"],
+      "adrs": ["ADR-001", "ADR-002"],
+      "depends_on": [],
+      "validation": {
+        "criteria": ["R1.1", "R1.2", "R1.3", "R1.4", "R2.1", "R2.2", "R2.3", "R2.4"],
+        "kinds": ["acceptance", "smoke"],
+        "sensitive_areas": []
+      },
+      "integration_obligations": [
+        "GET / returns 200 with the planner page and the page loads /styles.css and /js/app.mjs without errors.",
+        "web-ui renders only from planner-core's computeLayout; no placement or kerf arithmetic in app.mjs.",
+        "The plan object in memory has the exact shape of spec §9 so that stage 2 can persist it unchanged."
+      ]
+    },
+    {
+      "number": 2,
+      "goal": "Explain and fix pieces that do not fit (add board, move piece), save and restore the plan in local storage with a clear-plan control, and print a cut sheet.",
+      "tasks": [
+        "public/js/planner.mjs: unplaced reasons TOO_LONG and NO_ROOM with mm sentences per architecture §4 (R3.1: 'need 2406 mm (2400 mm of pieces plus 6 mm for 2 cuts) but the board is 2400 mm'; R3.5 naming piece length and longest board), checkMove/applyMove with refusal giving piece length, kerf and space left.",
+        "public/js/app.mjs + index.html + styles.css: unplaced panel listing each unplaced piece with its reason and an inline add-board control; a move control (board select) on every placed and unplaced piece; refusal message next to the control with the layout unchanged.",
+        "public/js/store.mjs: loadPlan/savePlan/clearPlan on localStorage key cutPlanner.plan per architecture §5; app.mjs loads on start (empty plan, no error, when nothing saved), saves after every change including moves, clear-plan behind confirm() then saves the empty plan.",
+        "Print: 'Print cut sheet' button calling window.print(); cut-sheet section listing blade width, each board's length, pieces in cutting order with length and label, the offcut, and an 'Unplaced pieces' heading when any; @media print hiding inputs, buttons and editing sections, bars in legible black and white.",
+        "tests/: node:test unit tests for unplaced reasons (R3.1, R3.5), checkMove refusal (R3.4), applyMove, and store round-trip, missing and corrupt values with an in-memory storage stub."
+      ],
+      "modules": ["planner-core", "plan-store", "web-ui", "tests"],
+      "implements": ["R3", "R4", "R5"],
+      "adrs": ["ADR-001", "ADR-002"],
+      "depends_on": [1],
+      "validation": {
+        "criteria": ["R3.1", "R3.2", "R3.3", "R3.4", "R3.5", "R4.1", "R4.2", "R4.3", "R4.4", "R5.1", "R5.2", "R5.3", "R5.4"],
+        "kinds": ["acceptance", "smoke"],
+        "sensitive_areas": []
+      },
+      "integration_obligations": [
+        "Stage 1 behaviour (entry, validation, to-scale layout) keeps working, now restored from and saved to local storage.",
+        "The saved value under cutPlanner.plan has exactly the shape of spec §9, including manual placements.",
+        "The cut sheet is produced from the same computeLayout result as the screen layout."
+      ]
+    }
+  ],
+  "conformance": "within_baseline",
+  "notes": "First plan of the rapid prototype: one phase, two stages, all five requirements; no environment, platform permission, asset or tier override added."
+}

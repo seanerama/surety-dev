@@ -1,0 +1,128 @@
+{
+  "phase": 2,
+  "prepared_against": {
+    "spec_version": 2,
+    "architecture_version": 2,
+    "roadmap_version": 2,
+    "revision": "9f3e59ad6d292478c533af010ce1a4f14e32bbdf"
+  },
+  "stages": [
+    {
+      "number": 1,
+      "goal": "Add the millimetres/inches selector: blade width, board and piece entry and display in the selected unit (decimal inches, fractions and text refused), lengths kept in millimetres so switching never changes a measurement, and the to-scale layout with piece, kerf and offcut lengths in the selected unit.",
+      "tasks": [
+        "public/js/units.mjs (new, architecture §5a, ADR-003): parseLength(raw, unit) -> mm (inches × 25.4, unrounded) or { ok: false, message } refusing zero, negative, non-numeric, fractions such as 3/4 and text such as 31in (inches message asks for a decimal number of inches); formatNumber/formatLength rounding to 3 decimals in inches and 2 in mm with trailing zeros dropped; unitSymbol, unitName, normalizeUnit.",
+        "public/index.html, public/js/app.mjs, public/styles.css: a unit selector offering millimetres and inches (mm by default); every length label shows the selected unit; blade, board and piece fields show formatNumber(stored, unit) and parse typed values with parseLength(raw, unit); a field left unedited is never written back; switching unit only re-renders from the unchanged plan.",
+        "public/js/app.mjs: every length in the layout (piece lengths and labels, kerf marks, offcut, captions, summaries) through formatLength(mm, unit); segment proportions and data-length-mm stay in millimetres (R2.5).",
+        "public/js/planner.mjs: keep validateQuantity and the mm arithmetic unchanged; accept non-integer millimetre lengths everywhere.",
+        "tests/: node:test unit tests for units (94.5 in -> 2400.3 mm, 31.5 in -> 800.1 mm, 0.25 in -> 6.35 mm; 2400/800/3 mm -> 94.488/31.496/0.118 in; 794 mm -> 31.26 in; 3/4 and 31in refused; repeated mm<->in display round trips leave stored values unchanged) and the existing layout tests still passing."
+      ],
+      "modules": [
+        "units",
+        "planner-core",
+        "web-ui",
+        "tests"
+      ],
+      "implements": [
+        "R1",
+        "R2"
+      ],
+      "adrs": [
+        "ADR-001",
+        "ADR-002",
+        "ADR-003"
+      ],
+      "depends_on": [],
+      "validation": {
+        "criteria": [
+          "R1.1",
+          "R1.2",
+          "R1.3",
+          "R1.4",
+          "R1.5",
+          "R1.6",
+          "R1.7",
+          "R2.1",
+          "R2.2",
+          "R2.3",
+          "R2.4",
+          "R2.5"
+        ],
+        "kinds": [
+          "acceptance",
+          "smoke"
+        ],
+        "sensitive_areas": []
+      },
+      "integration_obligations": [
+        "The saved plan shape and the in-memory plan stay exactly spec §9 (version 1, millimetres); the unit is not part of the plan.",
+        "web-ui does no conversion or rounding itself: all parsing and formatting go through units.mjs, all placement and kerf arithmetic through planner-core's computeLayout.",
+        "Iteration 1 behaviour in millimetres (R1.1–R1.4, R2.1–R2.4) is unchanged with millimetres selected."
+      ]
+    },
+    {
+      "number": 2,
+      "goal": "Unplaced explanations and move refusals in the selected unit, the selected unit saved and restored with iteration 1 plans reopening unchanged in millimetres, and a cut sheet that states its unit and gives every length in it.",
+      "tasks": [
+        "public/js/planner.mjs: computeLayout(plan, unit = 'mm') and checkMove(plan, layout, instanceId, boardId, unit = 'mm') keep reason lengths in mm and format their sentences with units.formatLength, each figure converted from its own mm value (R3.6: 'need 94.724 in (94.488 in of pieces plus 0.236 in for 2 cuts) but the board is 94.488 in'); placement never depends on the unit.",
+        "public/js/store.mjs: loadUnit/saveUnit on localStorage key cutPlanner.unit ('mm' when missing, unrecognised or storage throws); clearPlan keeps the unit; loadPlan unchanged so an iteration 1 plan with no unit opens as is in mm.",
+        "public/js/app.mjs: load the unit on start before the first render, save it when the selector changes; pass the unit to computeLayout and checkMove; unplaced panel, add-board and move controls keep working in both units.",
+        "Cut sheet (index.html, app.mjs, styles.css): a line at the top stating the unit (millimetres or inches); blade width, board lengths, pieces in cutting order, offcuts and unplaced pieces all via formatLength with the unit symbol; print stylesheet still hides controls including the unit selector.",
+        "tests/: node:test unit tests for unplaced and move-refusal sentences in inches (R3.6, R3.4), loadUnit/saveUnit with missing, unrecognised and throwing storage, clearPlan keeping the unit, and the iteration 1 saved plan (3 mm, 2400 mm, three 800 mm, no unit) loading unchanged with mm selected and the R3.1 layout."
+      ],
+      "modules": [
+        "units",
+        "planner-core",
+        "plan-store",
+        "web-ui",
+        "tests"
+      ],
+      "implements": [
+        "R3",
+        "R4",
+        "R5"
+      ],
+      "adrs": [
+        "ADR-001",
+        "ADR-002",
+        "ADR-003"
+      ],
+      "depends_on": [
+        1
+      ],
+      "validation": {
+        "criteria": [
+          "R3.1",
+          "R3.2",
+          "R3.3",
+          "R3.4",
+          "R3.5",
+          "R3.6",
+          "R4.1",
+          "R4.2",
+          "R4.3",
+          "R4.4",
+          "R4.5",
+          "R4.6",
+          "R5.1",
+          "R5.2",
+          "R5.3",
+          "R5.4",
+          "R5.5"
+        ],
+        "kinds": [
+          "acceptance",
+          "smoke"
+        ],
+        "sensitive_areas": []
+      },
+      "integration_obligations": [
+        "Stage 1 entry, unit switching and layout keep working, now with the unit restored from and saved to cutPlanner.unit.",
+        "cutPlanner.plan keeps exactly the spec §9 shape in millimetres; a value saved by iteration 1 is read without migration.",
+        "The cut sheet and the screen are produced from the same computeLayout result and the same selected unit."
+      ]
+    }
+  ],
+  "conformance": "uncertain",
+  "notes": "Phase 2 of iteration 2 delivers the gained criteria (R1.5–R1.7, R2.5, R3.6, R4.5, R4.6, R5.5) while re-validating every criterion of R1–R5. Architecture version 2 adds the units module (public/js/units.mjs), the cutPlanner.unit key and ADR-003."
+}

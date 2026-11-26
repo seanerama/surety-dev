@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "key": "accept-r1-1-unit",
+  "kind": "acceptance",
+  "origin": "acceptance",
+  "command": [
+    "node",
+    ".surety/checks/run/check-scenario.mjs",
+    "units-defaults",
+    "R1.1"
+  ],
+  "cwd": ".",
+  "timeout_s": 300,
+  "gate_kinds": [
+    "stage",
+    "alpha_authorize"
+  ],
+  "covers": {
+    "criteria": [
+      "R1.1"
+    ]
+  },
+  "inputs": [
+    ".surety/checks/run/check-scenario.mjs",
+    ".surety/checks/run/lib/page.mjs",
+    ".surety/checks/run/lib/dom.mjs",
+    ".surety/checks/run/lib/selectors.mjs",
+    ".surety/checks/run/lib/css.mjs",
+    ".surety/checks/run/lib/ui.mjs",
+    ".surety/checks/run/lib/hooks.mjs",
+    ".surety/checks/run/lib/steps.mjs",
+    ".surety/checks/run/lib/units.mjs",
+    ".surety/checks/run/scenarios/units-defaults.mjs"
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "key": "user-operation",
+  "kind": "post_deploy_behavior",
+  "origin": "acceptance",
+  "command": [
+    "node",
+    ".surety/checks/post-deploy/user-operation.mjs"
+  ],
+  "cwd": ".",
+  "timeout_s": 300,
+  "gate_kinds": [
+    "alpha_complete"
+  ],
+  "requires": [
+    "environment",
+    "artifact_digest"
+  ],
+  "inputs": [
+    ".surety/checks/post-deploy/user-operation.mjs",
+    ".surety/checks/post-deploy/scenario.mjs",
+    ".surety/checks/run/lib/page.mjs",
+    ".surety/checks/run/lib/dom.mjs",
+    ".surety/checks/run/lib/selectors.mjs",
+    ".surety/checks/run/lib/css.mjs",
+    ".surety/checks/run/lib/ui.mjs",
+    ".surety/checks/run/lib/hooks.mjs"
+  ]
+}

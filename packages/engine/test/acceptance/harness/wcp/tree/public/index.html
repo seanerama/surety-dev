@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workshop Cut Planner</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/js/app.mjs"></script>
+</head>
+<body>
+  <header class="page-header">
+    <h1>Workshop Cut Planner</h1>
+    <div class="unit-choice">
+      <label for="unit">Units</label>
+      <select id="unit" name="unit">
+        <option value="mm" selected>millimetres (mm)</option>
+        <option value="in">inches (in)</option>
+      </select>
+    </div>
+    <p class="intro">All lengths are in <span id="unit-name">millimetres</span> (<span class="unit">mm</span>).</p>
+    <div class="toolbar">
+      <button type="button" id="print-cut-sheet">Print cut sheet</button>
+      <button type="button" id="clear-plan" class="danger">Clear plan</button>
+    </div>
+    <p id="notice" class="notice" role="status" hidden></p>
+  </header>
+
+  <main>
+    <div class="editor">
+    <section id="saw" class="panel" aria-labelledby="saw-heading">
+      <h2 id="saw-heading">Saw</h2>
+      <div class="field">
+        <label for="blade-width">Blade width (kerf) <span class="unit">mm</span></label>
+        <input id="blade-width" name="blade" type="text" inputmode="decimal" autocomplete="off" value="3" aria-describedby="blade-width-msg">
+        <span class="msg" id="blade-width-msg" role="alert"></span>
+      </div>
+    </section>
+
+    <section id="boards" class="panel" aria-labelledby="boards-heading">
+      <h2 id="boards-heading">Boards</h2>
+      <ul id="board-list" class="rows"></ul>
+      <p id="board-empty" class="empty">No boards yet.</p>
+      <form id="add-board-form" class="add-form" novalidate>
+        <div class="field">
+          <label for="new-board-length">Board length <span class="unit">mm</span></label>
+          <input id="new-board-length" name="length" type="text" inputmode="decimal" autocomplete="off" aria-describedby="new-board-length-msg">
+          <span class="msg" id="new-board-length-msg" role="alert"></span>
+        </div>
+        <div class="actions"><button type="submit">Add board</button></div>
+      </form>
+    </section>
+
+    <section id="pieces" class="panel" aria-labelledby="pieces-heading">
+      <h2 id="pieces-heading">Pieces</h2>
+      <ul id="piece-list" class="rows"></ul>
+      <p id="piece-empty" class="empty">No pieces yet.</p>
+      <form id="add-piece-form" class="add-form" novalidate>
+        <div class="field">
+          <label for="new-piece-length">Piece length <span class="unit">mm</span></label>
+          <input id="new-piece-length" name="length" type="text" inputmode="decimal" autocomplete="off" aria-describedby="new-piece-length-msg">
+          <span class="msg" id="new-piece-length-msg" role="alert"></span>
+        </div>
+        <div class="field">
+          <label for="new-piece-quantity">Quantity</label>
+          <input id="new-piece-quantity" name="quantity" type="number" inputmode="numeric" step="1" min="1" value="1" aria-describedby="new-piece-quantity-msg">
+          <span class="msg" id="new-piece-quantity-msg" role="alert"></span>
+        </div>
+        <div class="field">
+          <label for="new-piece-label">Label (optional)</label>
+          <input id="new-piece-label" name="label" type="text" maxlength="60">
+        </div>
+        <div class="actions"><button type="submit">Add piece</button></div>
+      </form>
+    </section>
+    </div>
+
+    <section id="layout-section" class="panel layout-panel" aria-labelledby="layout-heading">
+      <h2 id="layout-heading">Cut layout</h2>
+      <p class="legend">
+        <span class="swatch swatch-piece"></span> piece
+        <span class="swatch swatch-kerf"></span> kerf (saw cut)
+        <span class="swatch swatch-offcut"></span> offcut
+      </p>
+      <div id="layout"></div>
+      <p id="layout-empty" class="empty">Add a board to see its layout.</p>
+    </section>
+
+    <section id="unplaced-section" class="panel unplaced-panel" aria-labelledby="unplaced-heading" hidden>
+      <h2 id="unplaced-heading">Unplaced pieces</h2>
+      <p class="hint">These pieces did not fit. Add a board, or move a piece to a board of your choice.</p>
+      <ul id="unplaced-list" class="unplaced-list"></ul>
+      <form id="unplaced-add-board-form" class="add-form" novalidate>
+        <div class="field">
+          <label for="unplaced-board-length">New board length <span class="unit">mm</span></label>
+          <input id="unplaced-board-length" name="length" type="text" inputmode="decimal" autocomplete="off" aria-describedby="unplaced-board-length-msg">
+          <span class="msg" id="unplaced-board-length-msg" role="alert"></span>
+        </div>
+        <button type="submit">Add board</button>
+      </form>
+    </section>
+
+    <section id="cut-sheet" class="cut-sheet" aria-labelledby="cut-sheet-heading">
+      <h2 id="cut-sheet-heading">Cut sheet</h2>
+      <div id="cut-sheet-body"></div>
+    </section>
+  </main>
+</body>
+</html>

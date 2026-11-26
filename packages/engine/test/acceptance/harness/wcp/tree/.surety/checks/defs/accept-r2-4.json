@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "key": "accept-r2-4",
+  "kind": "acceptance",
+  "origin": "acceptance",
+  "command": [
+    "node",
+    ".surety/checks/run/check.mjs",
+    "R2.4"
+  ],
+  "cwd": ".",
+  "timeout_s": 300,
+  "gate_kinds": [
+    "stage",
+    "alpha_authorize"
+  ],
+  "covers": {
+    "criteria": [
+      "R2.4"
+    ]
+  },
+  "inputs": [
+    ".surety/checks/run/check.mjs",
+    ".surety/checks/run/lib/page.mjs",
+    ".surety/checks/run/lib/dom.mjs",
+    ".surety/checks/run/lib/selectors.mjs",
+    ".surety/checks/run/lib/css.mjs",
+    ".surety/checks/run/lib/ui.mjs",
+    ".surety/checks/run/lib/hooks.mjs",
+    ".surety/checks/run/lib/steps.mjs",
+    ".surety/checks/run/scenarios/r2.mjs"
+  ]
+}

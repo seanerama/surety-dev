@@ -1,0 +1,4 @@
+{
+  "cutPlanner.plan": "{\"version\":1,\"bladeMm\":3,\"boards\":[{\"id\":\"b1\",\"lengthMm\":1000},{\"id\":\"b2\",\"lengthMm\":500}],\"pieces\":[{\"id\":\"p1\",\"lengthMm\":400,\"quantity\":3,\"label\":\"\"}],\"placements\":{}}",
+  "cutPlanner.unit": "mm"
+}
