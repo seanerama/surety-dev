@@ -26,7 +26,10 @@
 //     migration (labelled store write) serves `basis:
 //     'not_recorded_before_0053'` with `excluded_seconds` null, never 0;
 // (f) intervals overlapping (paused 1 h while parked 3 h): the union
-//     excluded once, never twice.
+//     excluded once, never twice;
+// and, as objection 237 asked (answered upheld): a restart and 3 h on the
+//     controlled clock between the park and the next tick: the interval is
+//     the park's own, from the park; not `limit_reached`.
 //
 // Readings this file makes (the report says them):
 // - "not limit_reached" is read after the event that ends the excluded
@@ -54,7 +57,8 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { readPlan } from './harness/journey/drive.mjs';
-import { advanceClockInSteps, pauseProject, resumeProject, tick } from './harness/runs.mjs';
+import { advanceClock, advanceClockInSteps, pauseProject, resumeProject, tick } from './harness/runs.mjs';
+import { restart } from './harness/gap57.mjs';
 import {
   CHECK_FILES,
   PROTO,
@@ -265,6 +269,28 @@ describe('M639 the runtime clock excludes recorded engine-blocked and paused int
     assertInterval(c, 'paused', 3600, '(f)');
     assert.ok(within(c.excluded_seconds, 10_800), `(f) the union (3 h) excluded once, never 4 h (${c.excluded_seconds})`);
     assert.ok(c.charged_seconds < LIMIT, `(f) charged below the limit (${c.charged_seconds})`);
+  });
+
+  test('(objection 237) a restart and 3 h between the park and the next tick: the parked interval is the park\'s own; not limit_reached', { timeout: 600_000 }, async (t) => {
+    const fx = await protoEngine(t, { config: { lease_ttl: 600 } });
+    const { id: p, it } = await toBrief(fx, { name: 'M639 237' });
+    kindNext(fx, 'replan', [fail(), fail()], firstPlanScript());
+    await answerOpen(fx, p, 'spec_approval');
+    // Pumped only until the replan parks: no tick after the park.
+    await pump(fx, p, () => (workOfProject(fx.home, p).some((w) => w.kind === 'replan' && w.status === 'parked') ? true : undefined), { what: 'the replan parked after its repair', max: 20 });
+    const R = workOfProject(fx.home, p).find((w) => w.kind === 'replan' && w.status === 'parked');
+    await restart(fx);
+    await advanceClock(fx.engine, 10_800);
+    await tick(fx.engine, p, { rounds: 2 });
+    const parkedRead = await iterationRead(fx, p, it.id);
+    assert.notEqual(parkedRead.iteration.status, 'limit_reached', `the first tick after the park and the 3 h does not end the iteration (${parkedRead.iteration.status}: ${parkedRead.outcome?.reason ?? ''})`);
+    const blocker = (await openDecisionsRead(fx, p)).find((d) => d.kind === 'blocker' && d.subject_id === R.id);
+    assert.ok(blocker, 'the fixture is live: the blocker question is open');
+    await retry(fx, p, blocker);
+    const r = await assertNotLimited(fx, p, it.id, '(237) after the retry');
+    const c = clockOf(r, '(237)');
+    assertRecorded(c, '(237)');
+    assertInterval(c, 'parked_on_blocker', 10_800, '(237)', [R.id, blocker.id]);
   });
 });
 
